@@ -18,6 +18,11 @@ STARVLA_VISION_POS_CACHE  Qwen3-VL vision tower: build the rotary position table
                           interpolation indices once per distinct grid instead of in every forward with a per-image
                           host loop (starVLA/model/modules/vlm/fast_vision_pos.py). Same tensors; the lookup in the
                           trainable position embedding still runs every step.
+STARVLA_INFER_SKIP_LM_HEAD  QwenOFT.predict_action: the same shortcut at inference (no vocabulary logits, no list of
+                          all 36 hidden states). Same last hidden state.
+STARVLA_INFER_PREP_THREADS=N  QwenOFT.predict_action: run the Qwen3-VL processor per request on N threads and pad the
+                          results together, instead of one single-threaded processor call over the whole batch.
+                          Same tensors.
 STARVLA_COMPILE_LM        torch.compile (Inductor) of each Qwen3-VL decoder layer's training forward: the elementwise
                           chains of forward and backward (RMSNorm, rotary embedding, gating, casts) become a few fused
                           kernels per layer. Changes floating-point rounding, not the function (not bitwise).

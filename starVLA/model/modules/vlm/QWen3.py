@@ -152,6 +152,46 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
+    def build_qwenvl_inputs_threaded(self, images, instructions, threads=8):
+        """build_qwenvl_inputs(images, instructions) for inference, with the processor run per sample on a thread
+        pool (image resizing / normalization and the tokenizer release the GIL) and the samples padded together
+        afterwards the way the tokenizer pads a batch. Same tensors as the batch call."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = self.__dict__.get("_prep_pool")
+        if pool is None or pool._max_workers != threads:
+            pool = self.__dict__["_prep_pool"] = ThreadPoolExecutor(max_workers=threads)
+
+        def one(i):
+            content = [{"type": "image", "image": img} for img in images[i]]
+            if "CoT_prompt" in self.config.datasets.vla_data:
+                prompt = self.config.datasets.vla_data.get("CoT_prompt", "").replace("{instruction}", instructions[i])
+            else:
+                prompt = instructions[i]
+            content.append({"type": "text", "text": prompt})
+            return self.processor.apply_chat_template(
+                [[{"role": "user", "content": content}]], tokenize=True, padding=True, add_generation_prompt=True,
+                return_dict=True, return_tensors="pt",
+            )
+
+        parts = list(pool.map(one, range(len(images))))
+        tok = self.processor.tokenizer
+        length = max(p["input_ids"].shape[1] for p in parts)
+        ids = torch.full((len(parts), length), tok.pad_token_id, dtype=parts[0]["input_ids"].dtype)
+        mask = torch.zeros((len(parts), length), dtype=parts[0]["attention_mask"].dtype)
+        for i, p in enumerate(parts):
+            n = p["input_ids"].shape[1]
+            sl = slice(length - n, length) if tok.padding_side == "left" else slice(0, n)
+            ids[i, sl] = p["input_ids"][0]
+            mask[i, sl] = p["attention_mask"][0]
+        batch = parts[0]
+        extra = set(batch.keys()) - {"input_ids", "attention_mask", "pixel_values", "image_grid_thw"}
+        assert not extra, f"unexpected processor outputs {extra}"
+        batch["input_ids"], batch["attention_mask"] = ids, mask
+        batch["pixel_values"] = torch.cat([p["pixel_values"] for p in parts], dim=0)
+        batch["image_grid_thw"] = torch.cat([p["image_grid_thw"] for p in parts], dim=0)
+        return batch.to(self.model.device)
+
     def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).

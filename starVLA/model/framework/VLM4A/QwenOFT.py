@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 import numpy as np
+import os
+
 import torch
 from PIL import Image
 
@@ -286,16 +288,26 @@ class Qwenvl_OFT(baseframework):
         instructions = [instruction + prompt_suffix for instruction in instructions]
 
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
-                **qwen_inputs,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
+        prep_threads = int(os.environ.get("STARVLA_INFER_PREP_THREADS", "0") or 0)
+        if prep_threads > 1 and len(batch_images) > 1:
+            qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_threaded(
+                images=batch_images, instructions=instructions, threads=prep_threads
             )
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+        else:
+            qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        if switch("STARVLA_INFER_SKIP_LM_HEAD"):
+            # the same tensor as hidden_states[-1] below, without the vocabulary logits and the 36 kept hidden states
+            last_hidden = self.qwen_vl_interface.last_layer_hidden_state(**qwen_inputs)  # [B, L, H]
+        else:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                qwenvl_outputs = self.qwen_vl_interface(
+                    **qwen_inputs,
+                    output_attentions=False,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+                # last_hidden_state: [B, seq_len, H]
+                last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
