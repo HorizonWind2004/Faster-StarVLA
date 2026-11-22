@@ -86,6 +86,10 @@ class _QWen3_VL_Interface(nn.Module):
             from starVLA.model.modules.vlm import fast_compile
 
             fast_compile.install(self.model)
+        if switch("STARVLA_COMPILE_VISION"):
+            from starVLA.model.modules.vlm import fast_compile
+
+            fast_compile.install_vision(self.model)
 
         # alin qwen3 with qwen2.5
         self.model.config.hidden_size = self.model.config.text_config.hidden_size

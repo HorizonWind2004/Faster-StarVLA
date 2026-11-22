@@ -7,8 +7,8 @@ views is 32 images: 24 layers x 32 attention calls per step, and the GPU waits f
 
 When all chunks have the same length (the usual case in training, where every view is resized to one resolution) the
 per-image calls are one batched call: the patches of image i are rows i*L:(i+1)*L, so [1, heads, n*L, d] is viewed
-as [n, heads, L, d]. Attention never mixes images either way. Chunk lengths are read once per vision forward (the
-first layer) and reused by the other layers. Unequal chunks, flash_attention_2 and eager attention use the original
+as [n, heads, L, d]. Attention never mixes images either way. The chunk layout is read once per vision forward, from
+grid_thw, and used by every layer. Unequal chunks, flash_attention_2 and eager attention use the original
 implementation.
 """
 import torch
@@ -17,18 +17,19 @@ from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3
 _installed = False
 
 
-def _uniform_chunks(cu_seqlens):
-    """(number of chunks, chunk length) when all chunks are equal, else None. One host read per cu_seqlens tensor."""
-    cached = _uniform_chunks.cache
-    if cached is not None and cached[0] is cu_seqlens:
-        return cached[1]
-    lengths = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
-    result = (len(lengths), lengths[0]) if lengths and all(x == lengths[0] for x in lengths) else None
-    _uniform_chunks.cache = (cu_seqlens, result)
-    return result
+class _State:
+    """Chunk layout of the vision forward in progress: (number of chunks, chunk length) when all chunks are equal,
+    else None. Set once per vision forward from grid_thw (one host read), read by every layer."""
+
+    uniform = None
 
 
-_uniform_chunks.cache = None
+def _uniform_layout(grid_thw):
+    rows = grid_thw.tolist()
+    lengths = [h * w for t, h, w in rows for _ in range(t)]  # cu_seqlens: one chunk of h*w patches per frame
+    if lengths and all(x == lengths[0] for x in lengths):
+        return (len(lengths), lengths[0])
+    return None
 
 
 def install():
@@ -36,10 +37,18 @@ def install():
     if _installed:
         return
     original = qwen3.Qwen3VLVisionAttention.forward
+    original_model_forward = qwen3.Qwen3VLVisionModel.forward
+
+    def model_forward(self, hidden_states, grid_thw, **kwargs):
+        _State.uniform = _uniform_layout(grid_thw)
+        try:
+            return original_model_forward(self, hidden_states, grid_thw, **kwargs)
+        finally:
+            _State.uniform = None
 
     def forward(self, hidden_states, cu_seqlens, rotary_pos_emb=None, position_embeddings=None, **kwargs):
         impl = self.config._attn_implementation
-        uniform = None if impl in ("eager", "flash_attention_2") else _uniform_chunks(cu_seqlens)
+        uniform = None if impl in ("eager", "flash_attention_2") else _State.uniform
         if uniform is None:
             return original(self, hidden_states, cu_seqlens, rotary_pos_emb=rotary_pos_emb,
                             position_embeddings=position_embeddings, **kwargs)
@@ -72,4 +81,5 @@ def install():
 
     forward._starvla_original = original
     qwen3.Qwen3VLVisionAttention.forward = forward
+    qwen3.Qwen3VLVisionModel.forward = model_forward
     _installed = True

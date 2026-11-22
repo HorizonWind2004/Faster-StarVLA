@@ -21,10 +21,16 @@ STARVLA_VISION_POS_CACHE  Qwen3-VL vision tower: build the rotary position table
 STARVLA_COMPILE_LM        torch.compile (Inductor) of each Qwen3-VL decoder layer's training forward: the elementwise
                           chains of forward and backward (RMSNorm, rotary embedding, gating, casts) become a few fused
                           kernels per layer. Changes floating-point rounding, not the function (not bitwise).
+STARVLA_COMPILE_VISION    the same for the 24 blocks of the Qwen3-VL vision tower (use with STARVLA_BATCHED_VISION_ATTN).
+                          Not bitwise.
 STARVLA_DS_REDUCE_TO_OWNER  DeepSpeed ZeRO-2: reduce every gradient bucket to the rank that owns those parameters
                           (zero_optimization.use_multi_rank_bucket_allreduce = false) instead of all-reducing it to
                           every rank and discarding the copy on the ranks that do not own it. Each owner receives
                           the same sum; the transfer volume is halved on two ranks.
+STARVLA_DS_PLAIN_ALLREDUCE  DeepSpeed ZeRO-2: all-reduce each gradient bucket in place (zero_optimization.reduce_scatter =
+                          false) instead of slicing it per parameter and owner, concatenating the slices,
+                          all-reducing the copy and copying the owned part back. On two ranks (a + b) * 0.5 and
+                          a * 0.5 + b * 0.5 are the same bf16 value.
 STARVLA_DS_FUSED_GRAD_NORM  DeepSpeed ZeRO-2 clipping norm: vector_norm(g, dtype=float64) instead of
                           vector_norm(g.double()), per parameter as before. Same value bit for bit, without
                           materializing every gradient in fp64.
@@ -92,5 +98,7 @@ def apply_deepspeed_switches(model):
     zero_optimizer = getattr(model, "optimizer", None)
     if switch("STARVLA_DS_REDUCE_TO_OWNER") and hasattr(zero_optimizer, "use_multi_rank_bucket_allreduce"):
         zero_optimizer.use_multi_rank_bucket_allreduce = False
+    if switch("STARVLA_DS_PLAIN_ALLREDUCE") and hasattr(zero_optimizer, "reduce_scatter"):
+        zero_optimizer.reduce_scatter = False
     if switch("STARVLA_DS_FUSED_GRAD_NORM") and type(zero_optimizer).__name__ == "DeepSpeedZeroOptimizer":
         _fused_grad_norm(zero_optimizer)

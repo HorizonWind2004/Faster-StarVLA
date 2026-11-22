@@ -1,4 +1,4 @@
-"""Regional torch.compile of the Qwen3-VL decoder layers for training.
+"""Regional torch.compile of the Qwen3-VL decoder layers and vision blocks for training.
 
 At the training shape (16 x 205 tokens) one forward + backward of the 36 decoder layers runs about 10,000 small GPU
 ops: per layer and direction a handful of matrix products and dozens of elementwise ops (RMSNorm in fp32, rotary
@@ -12,17 +12,12 @@ unchanged (the layer's `forward` attribute is replaced, the layer is not wrapped
 """
 import torch
 
-_installed = False
+_installed = set()
 
 
-def install(qwen_model, dynamic=True):
-    """qwen_model: Qwen3VLForConditionalGeneration."""
-    global _installed
-    if _installed:
-        return
+def _compile_forwards(layers, dynamic):
     import torch._dynamo
 
-    layers = qwen_model.model.language_model.layers
     # one cache entry per layer instance on the shared code object
     for name in ("recompile_limit", "cache_size_limit"):
         if hasattr(torch._dynamo.config, name):
@@ -37,4 +32,18 @@ def install(qwen_model, dynamic=True):
             return _eager(*args, **kwargs)
 
         layer.forward = forward
-    _installed = True
+
+
+def install(qwen_model, dynamic=True):
+    """Compile the decoder layers of a Qwen3VLForConditionalGeneration."""
+    if "lm" not in _installed:
+        _compile_forwards(qwen_model.model.language_model.layers, dynamic)
+        _installed.add("lm")
+
+
+def install_vision(qwen_model, dynamic=True):
+    """Compile the vision blocks of a Qwen3VLForConditionalGeneration (24 blocks; about 60 ops each per direction).
+    Meant to be used with the batched vision attention (fast_vision_attn), whose per-layer code has no host reads."""
+    if "vision" not in _installed:
+        _compile_forwards(qwen_model.model.visual.blocks, dynamic)
+        _installed.add("vision")
