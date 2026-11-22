@@ -10,9 +10,13 @@ Only gradient-enabled calls use the compiled forward; evaluation (inference_mode
 nothing is compiled when the trainer's periodic evaluation first runs. Module structure and parameter names are
 unchanged (the layer's `forward` attribute is replaced, the layer is not wrapped).
 """
+import gc
+
 import torch
 
 _installed = set()
+_gc = {"layers": 0, "calls": 0, "frozen": False}
+_FREEZE_AFTER_STEPS = 4  # training forwards before the freeze
 
 
 def _compile_forwards(layers, dynamic):
@@ -22,16 +26,32 @@ def _compile_forwards(layers, dynamic):
     for name in ("recompile_limit", "cache_size_limit"):
         if hasattr(torch._dynamo.config, name):
             setattr(torch._dynamo.config, name, max(getattr(torch._dynamo.config, name), 4 * len(layers)))
+    _gc["layers"] += len(layers)
     for layer in layers:
         eager = layer.forward
         compiled = torch.compile(eager, dynamic=dynamic)
 
         def forward(*args, _eager=eager, _compiled=compiled, **kwargs):
             if torch.is_grad_enabled():
-                return _compiled(*args, **kwargs)
+                out = _compiled(*args, **kwargs)
+                if not _gc["frozen"]:
+                    _freeze_compiler_objects()
+                return out
             return _eager(*args, **kwargs)
 
         layer.forward = forward
+
+
+def _freeze_compiler_objects():
+    """Compiling leaves millions of long-lived Python objects behind (FX graphs, guards, the symbolic-shape
+    environment). Every full garbage collection then walks all of them: 1-2 s pauses in single training steps,
+    at fixed step numbers. Once the graphs exist (a few steps in; forward and backward are both compiled within the
+    first step), move everything allocated so far to the permanent generation, which the collector does not scan."""
+    _gc["calls"] += 1
+    if _gc["calls"] >= _FREEZE_AFTER_STEPS * _gc["layers"]:
+        gc.collect()
+        gc.freeze()
+        _gc["frozen"] = True
 
 
 def install(qwen_model, dynamic=True):
