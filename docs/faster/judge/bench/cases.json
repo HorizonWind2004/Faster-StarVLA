@@ -1,0 +1,19 @@
+[
+ {
+  "name": "step2",
+  "seed": 0,
+  "steps": 2,
+  "args": {
+   "--trainer.max_train_steps": "30000"
+  }
+ },
+ {
+  "name": "eval",
+  "seed": 1,
+  "steps": 2,
+  "args": {
+   "--trainer.eval_interval": "1",
+   "--trainer.num_warmup_steps": "2"
+  }
+ }
+]

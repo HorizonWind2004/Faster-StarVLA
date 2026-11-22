@@ -1,0 +1,13 @@
+{
+ "steps": 60,
+ "upd": true,
+ "probe_steps": [
+  40,
+  60
+ ],
+ "args": {
+  "--trainer.num_warmup_steps": "10",
+  "--trainer.max_train_steps": "60",
+  "--trainer.eval_interval": "20"
+ }
+}

@@ -1,0 +1,158 @@
+{
+ "task": "starVLA QwenOFT (Qwen3-VL-4B) LIBERO 4-in-1 training (examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh), 2 x B300, per-device batch 16, DeepSpeed ZeRO-2, bf16",
+ "precision": "bf16 autocast (SDPA attention), DeepSpeed ZeRO-2 with fp32 master weights and Adam states",
+ "world_size": 2,
+ "per_rank_batch": 16,
+ "agent_max_tier": "N2",
+ "reference": "targets/reference",
+ "candidate": "starVLA",
+ "reference_commit": "99764f57339d2d5e1e74f075d32066c5edac78ef",
+ "upstream": {
+  "repo": "https://github.com/starVLA/starVLA",
+  "commit": "99764f57339d2d5e1e74f075d32066c5edac78ef"
+ },
+ "python": "$ENVS/starvla/bin/python",
+ "env_file": "$ASSETS/env.sh",
+ "gpu_lock": "$WORK/starvla/gpu.lock",
+ "scratch": "/dev/shm",
+ "entry": "starVLA/training/train_starvla.py",
+ "accelerate_config": "starVLA/config/deepseeds/deepspeed_zero2.yaml",
+ "assets": {
+  "model": "$ASSETS/models/Qwen3-VL-4B-Instruct",
+  "data": "$ASSETS/data/libero"
+ },
+ "train_args": [
+  "--config_yaml",
+  "examples/simBenchmarks/LIBERO/train_files/starvla_cotrain_libero.yaml",
+  "--framework.name",
+  "QwenOFT",
+  "--framework.qwenvl.base_vlm",
+  "{model}",
+  "--datasets.vla_data.data_root_dir",
+  "{data}",
+  "--datasets.vla_data.data_mix",
+  "libero_all",
+  "--datasets.vla_data.per_device_batch_size",
+  "16",
+  "--trainer.vla_data.video_backend",
+  "torchvision_av",
+  "--trainer.freeze_modules",
+  "",
+  "--trainer.max_train_steps",
+  "30000",
+  "--trainer.save_interval",
+  "10000",
+  "--trainer.logging_frequency",
+  "100",
+  "--trainer.eval_interval",
+  "100",
+  "--run_root_dir",
+  "{out}",
+  "--run_id",
+  "bench",
+  "--wandb_project",
+  "bench",
+  "--wandb_entity",
+  "bench"
+ ],
+ "reserved_env": [
+  "ASSETS",
+  "CUDA_VISIBLE_DEVICES",
+  "PYTHONPATH",
+  "LD_LIBRARY_PATH",
+  "TMPDIR",
+  "HF_HOME",
+  "HF_HUB_OFFLINE",
+  "TRANSFORMERS_OFFLINE",
+  "WANDB_MODE",
+  "TORCHINDUCTOR_CACHE_DIR",
+  "TRITON_CACHE_DIR",
+  "RANK",
+  "LOCAL_RANK",
+  "WORLD_SIZE",
+  "CUBLAS_WORKSPACE_CONFIG",
+  "CUDA_HOME",
+  "PATH"
+ ],
+ "timing": {
+  "warmup": 20,
+  "window": 100,
+  "repeats": 2,
+  "reference_runs": 2,
+  "frozen": "task/timing_ref.json",
+  "frozen_band": 0.05,
+  "pair_band": 0.03,
+  "window_band": 0.05
+ },
+ "timeouts_s": {
+  "time": 2400,
+  "record": 5400,
+  "trajectory": 2400,
+  "probe": 900,
+  "idle_wait": 600
+ },
+ "coverage": {
+  "entry_functions": [
+   "main",
+   "setup_optimizer_and_scheduler",
+   "prepare_data",
+   "setup_directories",
+   "VLATrainer.__init__",
+   "VLATrainer.prepare_training",
+   "VLATrainer._calculate_total_batch_size",
+   "VLATrainer._init_checkpointing",
+   "VLATrainer._adjust_lr_scheduler_for_resume"
+  ],
+  "loop_owner": "VLATrainer.train",
+  "probe_samples": 96,
+  "probe_batches": 4,
+  "reference_probe": "task/loader_reference.json"
+ },
+ "numerics": {
+  "adapter": "bench.starvla_adapter:StarVLAAdapter",
+  "cases": "bench/cases.json",
+  "sketch_dim": 4096,
+  "ref": "task/records/ref",
+  "trainable": "task/trainable.json",
+  "deterministic": true
+ },
+ "trajectory": {
+  "cases": "bench/traj_cases.json",
+  "spec": "bench/traj_spec.json",
+  "frozen": "task/traj_frozen.json",
+  "ref": "task/traj/ref",
+  "seeds": 1,
+  "sigma_k": 3,
+  "reference_seeds": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "probe_index": 9000000,
+  "probe_rows": 16,
+  "vlm_params": [
+   "qwen_vl_interface.model.model.visual.blocks.23.attn.qkv.weight",
+   "qwen_vl_interface.model.model.visual.merger.linear_fc1.weight",
+   "qwen_vl_interface.model.model.language_model.layers.0.mlp.down_proj.weight",
+   "qwen_vl_interface.model.model.language_model.layers.17.mlp.down_proj.weight",
+   "qwen_vl_interface.model.model.language_model.layers.35.mlp.down_proj.weight"
+  ]
+ },
+ "invalid_run_signatures": [
+  {
+   "regex": "CUDA out of memory",
+   "reason": "out of memory"
+  },
+  {
+   "regex": "Traceback \\(most recent call last\\)",
+   "reason": "python exception"
+  },
+  {
+   "regex": "slow_conv_dilated3d",
+   "reason": "cuDNN fallback"
+  }
+ ]
+}

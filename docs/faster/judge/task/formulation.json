@@ -1,0 +1,28 @@
+{
+ "task": "starvla-qwenoft-libero",
+ "frozen_at": "2026-11-22T19:13:41",
+ "evaluator_sha256": "868f97722fd37ab3fb2b34a8347147bf4214028f5bf084e73425065a78b68a95",
+ "reference_commit": "99764f57339d2d5e1e74f075d32066c5edac78ef",
+ "reference_tree_digest": "63fdaccf3a0b4db9b94bfd22caebc922340b7c97de5cfba3400cfecf37db6e37",
+ "hardware": "2 x NVIDIA B300, 32 CPU cores, one node (SLURM allocation)",
+ "frozen_inputs": {
+  "timing": "task/timing_ref.json",
+  "records": "task/records/ref",
+  "trajectories": "task/traj/ref (6 seeds)",
+  "traj_frozen": "task/traj_frozen.json",
+  "loader": "task/loader_reference.json",
+  "trainable": "task/trainable.json"
+ },
+ "acceptance": {
+  "a_reference_quick": "PASS N0 (bitwise)",
+  "a_reference_full": "UNAVAILABLE no_benefit (speedup 1.0044)",
+  "b_setup_changed": "ERROR (structure: main differs)",
+  "c1_clipping_changed": "INCORRECT (gate 2 exact item)",
+  "c2_vlm_without_gradient": "INCORRECT (gate 3: updvlmq -729 sigma)",
+  "d_equivalent_reordering": "gate 3 PASS (N1)",
+  "e_lr_x1.02": "INCORRECT (gate 3: updq +16.4 sigma, updvlmq +14.7 sigma)"
+ },
+ "evaluator_sha256_before_change_1": "9a297649b4f4fc66b6ea7900d1a83c63ba064079391f3ec816f5fd9c56bb17ce",
+ "judge_changes": "task/judge_changes.md",
+ "changed_at": "2026-11-22T20:28:01"
+}

@@ -1,0 +1,60 @@
+{
+ "endpoints": [
+  {
+   "name": "loss_20_40",
+   "loss": "loss",
+   "steps": [
+    20,
+    40
+   ]
+  },
+  {
+   "name": "loss_40_60",
+   "loss": "loss",
+   "steps": [
+    40,
+    60
+   ]
+  },
+  {
+   "name": "probe_50_60",
+   "loss": "probe",
+   "steps": [
+    50,
+    60
+   ]
+  },
+  {
+   "name": "upd_10_60",
+   "loss": "upd",
+   "steps": [
+    10,
+    60
+   ]
+  },
+  {
+   "name": "updvlm_10_60",
+   "loss": "upd_vlm",
+   "steps": [
+    10,
+    60
+   ]
+  },
+  {
+   "name": "updq_1_6",
+   "loss": "updq",
+   "steps": [
+    1,
+    6
+   ]
+  },
+  {
+   "name": "updvlmq_1_6",
+   "loss": "upd_vlmq",
+   "steps": [
+    1,
+    6
+   ]
+  }
+ ]
+}
