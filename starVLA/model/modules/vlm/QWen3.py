@@ -74,6 +74,10 @@ class _QWen3_VL_Interface(nn.Module):
             from starVLA.model.modules.vlm import fast_masks
 
             fast_masks.install()
+        if switch("STARVLA_BATCHED_VISION_ATTN"):
+            from starVLA.model.modules.vlm import fast_vision_attn
+
+            fast_vision_attn.install()
 
         # alin qwen3 with qwen2.5
         self.model.config.hidden_size = self.model.config.text_config.hidden_size

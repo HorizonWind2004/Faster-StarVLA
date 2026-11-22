@@ -10,6 +10,10 @@ STARVLA_SKIP_LM_HEAD      QwenOFT training reads the VLM's last hidden state onl
 STARVLA_FAST_ATTN_MASK    build the causal + padding attention mask with two broadcasted tensor ops instead of
                           transformers' four nested torch.vmap calls (starVLA/model/modules/vlm/fast_masks.py).
                           Same boolean mask.
+STARVLA_BATCHED_VISION_ATTN  Qwen3-VL vision tower with SDPA: one batched attention call per layer instead of one call
+                          per image plus a host read of the chunk lengths in every layer, when all images have the
+                          same number of patches (starVLA/model/modules/vlm/fast_vision_attn.py). Same outputs and
+                          gradients, bit for bit.
 STARVLA_DS_REDUCE_TO_OWNER  DeepSpeed ZeRO-2: reduce every gradient bucket to the rank that owns those parameters
                           (zero_optimization.use_multi_rank_bucket_allreduce = false) instead of all-reducing it to
                           every rank and discarding the copy on the ranks that do not own it. Each owner receives
