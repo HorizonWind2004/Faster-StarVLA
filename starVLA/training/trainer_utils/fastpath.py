@@ -18,6 +18,9 @@ STARVLA_VISION_POS_CACHE  Qwen3-VL vision tower: build the rotary position table
                           interpolation indices once per distinct grid instead of in every forward with a per-image
                           host loop (starVLA/model/modules/vlm/fast_vision_pos.py). Same tensors; the lookup in the
                           trainable position embedding still runs every step.
+STARVLA_COMPILE_LM        torch.compile (Inductor) of each Qwen3-VL decoder layer's training forward: the elementwise
+                          chains of forward and backward (RMSNorm, rotary embedding, gating, casts) become a few fused
+                          kernels per layer. Changes floating-point rounding, not the function (not bitwise).
 STARVLA_DS_REDUCE_TO_OWNER  DeepSpeed ZeRO-2: reduce every gradient bucket to the rank that owns those parameters
                           (zero_optimization.use_multi_rank_bucket_allreduce = false) instead of all-reducing it to
                           every rank and discarding the copy on the ranks that do not own it. Each owner receives
