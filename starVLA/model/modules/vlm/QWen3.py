@@ -2,7 +2,6 @@
 # Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
-import threading
 from typing import Optional
 
 import torch
@@ -71,7 +70,6 @@ class _QWen3_VL_Interface(nn.Module):
         self.model = model
         self.processor = processor
         self.config = config
-        self._processor_lock = threading.Lock()
         if switch("STARVLA_FAST_ATTN_MASK"):
             from starVLA.model.modules.vlm import fast_masks
 
@@ -138,7 +136,7 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
-    def build_qwenvl_inputs(self, images, instructions, solutions=None, to_device=True, **kwargs):
+    def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
         Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
@@ -166,10 +164,9 @@ class _QWen3_VL_Interface(nn.Module):
 
         # Preparation for inference
 
-        with self._processor_lock:  # the tokenizer is not re-entrant (a prefetch thread may also be preparing)
-            batch_inputs = self.processor.apply_chat_template(
-                messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
-            )
+        batch_inputs = self.processor.apply_chat_template(
+            messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
+        )
 
         # if solutions, mask out the solution tokens in labels
         if solutions is not None:  #  here only for fast_tokenizer now.
@@ -196,7 +193,7 @@ class _QWen3_VL_Interface(nn.Module):
             labels[labels == self.processor.tokenizer.pad_token_id] = -100  ## mask out pad tokens as well
             batch_inputs["labels"] = labels
 
-        return batch_inputs.to(self.model.device) if to_device else batch_inputs
+        return batch_inputs.to(self.model.device)
 
 
 if __name__ == "__main__":

@@ -146,7 +146,7 @@ class Qwenvl_OFT(baseframework):
         self.action_token = "🔍"  # TODO also can add spacail token to Qwen, but too complex
         self.action_token_id = self.qwen_vl_interface.processor.tokenizer("🔍", add_special_tokens=False)["input_ids"][0]
 
-    def _build_training_inputs(self, examples: List[dict], to_device: bool = True):
+    def _build_training_inputs(self, examples: List[dict]):
         """Prompt construction + VLM processor for a training batch (steps 0-1 of forward())."""
         batch_images = [example["image"] for example in examples]  #  [B, [PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
@@ -167,19 +167,11 @@ class Qwenvl_OFT(baseframework):
         instructions = [instruction + prompt_suffix for instruction in instructions]
 
         # Step 1: QWenVL input format
-        return self.qwen_vl_interface.build_qwenvl_inputs(
-            images=batch_images, instructions=instructions, to_device=to_device
-        )
-
-    def prepare_inputs(self, examples: List[dict]) -> dict:
-        """CPU-only half of forward(): the VLM inputs of a training batch, on the CPU. Safe to call from another
-        thread while the model trains; pass the result to forward(examples, prepared=...)."""
-        return {"qwen_inputs": self._build_training_inputs(examples, to_device=False)}
+        return self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
 
     def forward(
         self,
         examples: List[dict] = None,
-        prepared: Optional[dict] = None,
         **kwargs,
     ) -> Tuple:
         """
@@ -205,11 +197,14 @@ class Qwenvl_OFT(baseframework):
         action_masks = [example.get("action_mask") for example in examples]
         if any(mask is not None for mask in action_masks) and not all(mask is not None for mask in action_masks):
             raise ValueError("action_mask must be present for every example in a batch or for none")
-        # Steps 0-1: prompt + QWenVL input format (built here, or ahead of time by prepare_inputs())
+        # Steps 0-1: prompt + QWenVL input format: built here, or already by the data-loader workers
+        # (STARVLA_PREP_IN_WORKERS, see starVLA/dataloader/prepared_collate.py)
+        prepared = examples[0].get("_prepared")
         if prepared is None:
-            qwen_inputs = self._build_training_inputs(examples, to_device=True)
+            qwen_inputs = self._build_training_inputs(examples)
         else:
-            qwen_inputs = prepared["qwen_inputs"].to(self.qwen_vl_interface.model.device)
+            device = self.qwen_vl_interface.model.device
+            qwen_inputs = {key: value.to(device) for key, value in prepared["qwen_inputs"].items()}
         if switch("STARVLA_SKIP_LM_HEAD"):
             # The OFT loss reads the last hidden state only: leave the unused vocabulary logits out.
             with torch.autocast("cuda", dtype=torch.bfloat16):

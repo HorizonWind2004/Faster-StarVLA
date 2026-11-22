@@ -322,19 +322,12 @@ class VLATrainer(TrainerUtils):
     def _create_data_iterators(self):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
-        from starVLA.training.trainer_utils.fastpath import make_prefetcher
+        from starVLA.training.trainer_utils.fastpath import apply_deepspeed_switches
 
-        self._prefetcher = make_prefetcher(self)  # None unless STARVLA_PREP_AHEAD is set
+        apply_deepspeed_switches(self.model)  # no-op unless a STARVLA_DS_* switch is set
 
     def _get_next_batch(self):
         """Get next batch (automatically handle data loop)."""
-        if getattr(self, "_prefetcher", None) is not None:
-            batch_vla, self._prepared = self._prefetcher.get()
-            return batch_vla
-        return self._next_batch_sync()
-
-    def _next_batch_sync(self):
-        """Fetch the next batch from the data loader (upstream _get_next_batch)."""
         try:
             batch_vla = next(self.vla_iter)
         except StopIteration:
@@ -424,15 +417,11 @@ class VLATrainer(TrainerUtils):
 
     def _train_step(self, batch_vla, batch_vlm=None):
         """Execute single training step."""
-        prepared = self.__dict__.pop("_prepared", None)  # inputs built ahead by the prefetcher, if any
         with self.accelerator.accumulate(self.model):
             self.optimizer.zero_grad()
 
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                if prepared is None:
-                    output_dict = self.model.forward(batch_vla)
-                else:
-                    output_dict = self.model.forward(batch_vla, prepared=prepared)
+                output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 total_loss = action_loss
 

@@ -7,6 +7,7 @@ import numpy as np
 import torch.distributed as dist
 from pathlib import Path
 from starVLA.dataloader.vlm_datasets import make_vlm_dataloader
+from starVLA.training.trainer_utils.fastpath import switch
 
 logger = get_logger(__name__)
 
@@ -45,9 +46,15 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             balance_trajectory_weights=vla_dataset_cfg.get("balance_trajectory_weights", False),
         )
         num_workers = int(vla_dataset_cfg.get("num_workers", 4))
+        batch_collate_fn = collate_fn
+        if num_workers > 0 and switch("STARVLA_PREP_IN_WORKERS"):
+            # also build the model inputs of each batch in the workers (QwenOFT on Qwen3-VL; None otherwise)
+            from starVLA.dataloader.prepared_collate import prepared_collate_for
+
+            batch_collate_fn = prepared_collate_for(cfg) or collate_fn
         dataloader_kwargs = {
             "batch_size": cfg.datasets.vla_data.per_device_batch_size,
-            "collate_fn": collate_fn,
+            "collate_fn": batch_collate_fn,
             "num_workers": num_workers,
             "pin_memory": bool(vla_dataset_cfg.get("pin_memory", True)),
             # shuffle=True

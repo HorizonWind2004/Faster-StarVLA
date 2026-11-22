@@ -1,55 +1,29 @@
 """Opt-in fast paths of the trainer. Every switch is an environment variable, off unless set to a non-zero value;
 with none set the trainer runs the upstream code path.
 
-STARVLA_PREP_AHEAD   prepare the next batch's model inputs (prompt construction + VLM processor, CPU only) in a
-                     background thread while the GPU works on the current step. Batches are taken from the data
-                     loader in the same order and the prepared tensors are the ones forward() would have built.
-STARVLA_SKIP_LM_HEAD QwenOFT training reads the VLM's last hidden state only: call the backbone without the
-                     language-model head, whose logits (batch x tokens x 151,936) are never used. Same hidden
-                     state (the last decoder layer's output), same gradients.
-STARVLA_FAST_ATTN_MASK build the causal + padding attention mask with two broadcasted tensor ops instead of transformers'
-                     four nested torch.vmap calls (see starVLA/model/modules/vlm/fast_masks.py). Same boolean mask.
+STARVLA_PREP_IN_WORKERS   QwenOFT: build the batch's VLM inputs (prompt construction + Qwen3-VL processor, 0.19 s of
+                          single-threaded CPU per step) in the data-loader workers instead of in the training
+                          process, where the GPU waits for them. Same code on the same samples: same tensors.
+STARVLA_SKIP_LM_HEAD      QwenOFT training reads the VLM's last hidden state only: call the backbone without the
+                          language-model head, whose logits (batch x tokens x 151,936) are never used. Same hidden
+                          state (the last decoder layer's output), same gradients.
+STARVLA_FAST_ATTN_MASK    build the causal + padding attention mask with two broadcasted tensor ops instead of
+                          transformers' four nested torch.vmap calls (starVLA/model/modules/vlm/fast_masks.py).
+                          Same boolean mask.
+STARVLA_DS_REDUCE_TO_OWNER  DeepSpeed ZeRO-2: reduce every gradient bucket to the rank that owns those parameters
+                          (zero_optimization.use_multi_rank_bucket_allreduce = false) instead of all-reducing it to
+                          every rank and discarding the copy on the ranks that do not own it. Each owner receives
+                          the same sum; the transfer volume is halved on two ranks.
 """
 import os
-import queue
-import threading
 
 
 def switch(name):
     return os.environ.get(name, "0") not in ("", "0", "false", "False")
 
 
-class BatchPrefetcher:
-    """Pulls batches with `next_batch` (the trainer's own, epoch-aware fetch) and runs `prepare` on each, one step
-    ahead of the training loop. get() returns (batch, prepared) in data-loader order."""
-
-    def __init__(self, next_batch, prepare, depth=2):
-        self._next_batch, self._prepare = next_batch, prepare
-        self._queue = queue.Queue(maxsize=depth)
-        self._thread = threading.Thread(target=self._run, name="batch-prefetcher", daemon=True)
-        self._thread.start()
-
-    def _run(self):
-        try:
-            while True:
-                batch = self._next_batch()
-                self._queue.put((batch, self._prepare(batch), None))
-        except BaseException as error:  # surfaced by get() in the training thread
-            self._queue.put((None, None, error))
-
-    def get(self):
-        batch, prepared, error = self._queue.get()
-        if error is not None:
-            raise error
-        return batch, prepared
-
-
-def make_prefetcher(trainer):
-    """A BatchPrefetcher for this trainer, or None when the switch is off or the framework has no prepare_inputs()."""
-    if not switch("STARVLA_PREP_AHEAD"):
-        return None
-    module = getattr(trainer.model, "module", trainer.model)
-    prepare = getattr(module, "prepare_inputs", None)
-    if prepare is None:
-        return None
-    return BatchPrefetcher(trainer._next_batch_sync, prepare)
+def apply_deepspeed_switches(model):
+    """Runtime DeepSpeed settings selected by switches; `model` is the DeepSpeed engine Accelerate returned."""
+    zero_optimizer = getattr(model, "optimizer", None)
+    if switch("STARVLA_DS_REDUCE_TO_OWNER") and hasattr(zero_optimizer, "use_multi_rank_bucket_allreduce"):
+        zero_optimizer.use_multi_rank_bucket_allreduce = False
