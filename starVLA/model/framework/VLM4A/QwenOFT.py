@@ -54,6 +54,7 @@ from starVLA.model.framework.base_framework import baseframework
 from starVLA.model.framework.share_tools import add_discretized_state_to_instruction, merge_framework_config
 from starVLA.model.modules.action_model.MLP_ActionHeader import get_action_model
 from starVLA.model.modules.vlm import get_vlm_model
+from starVLA.training.trainer_utils.fastpath import switch
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 
 
@@ -209,15 +210,20 @@ class Qwenvl_OFT(baseframework):
             qwen_inputs = self._build_training_inputs(examples, to_device=True)
         else:
             qwen_inputs = prepared["qwen_inputs"].to(self.qwen_vl_interface.model.device)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            qwenvl_outputs = self.qwen_vl_interface(
-                **qwen_inputs,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+        if switch("STARVLA_SKIP_LM_HEAD"):
+            # The OFT loss reads the last hidden state only: leave the unused vocabulary logits out.
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                last_hidden = self.qwen_vl_interface.last_layer_hidden_state(**qwen_inputs)  # [B, L, H]
+        else:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                qwenvl_outputs = self.qwen_vl_interface(
+                    **qwen_inputs,
+                    output_attentions=False,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+                # last_hidden_state: [B, seq_len, H]
+                last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):

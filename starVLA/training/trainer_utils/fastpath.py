@@ -4,6 +4,9 @@ with none set the trainer runs the upstream code path.
 STARVLA_PREP_AHEAD   prepare the next batch's model inputs (prompt construction + VLM processor, CPU only) in a
                      background thread while the GPU works on the current step. Batches are taken from the data
                      loader in the same order and the prepared tensors are the ones forward() would have built.
+STARVLA_SKIP_LM_HEAD QwenOFT training reads the VLM's last hidden state only: call the backbone without the
+                     language-model head, whose logits (batch x tokens x 151,936) are never used. Same hidden
+                     state (the last decoder layer's output), same gradients.
 """
 import os
 import queue

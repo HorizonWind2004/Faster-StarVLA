@@ -95,6 +95,26 @@ class _QWen3_VL_Interface(nn.Module):
 
         return outputs
 
+    def last_layer_hidden_state(self, **kwargs) -> torch.Tensor:
+        """The output of the last decoder layer, i.e. forward(output_hidden_states=True).hidden_states[-1], without
+        computing the language-model head.
+
+        forward() runs the backbone, then projects every position onto the vocabulary; callers that only read the
+        last hidden state never use those logits. This calls the backbone (Qwen3VLModel) and returns the last
+        decoder layer's output, captured by a forward hook: the tensor forward() reports as hidden_states[-1]
+        (before the final norm), bit for bit."""
+        captured = []
+        last_layer = self.model.model.language_model.layers[-1]
+        handle = last_layer.register_forward_hook(
+            lambda _module, _inputs, output: captured.append(output[0] if isinstance(output, tuple) else output)
+        )
+        try:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                self.model.model(**kwargs)
+        finally:
+            handle.remove()
+        return captured[-1]
+
     def generate(
         self,
         **kwargs,
