@@ -14,6 +14,10 @@ STARVLA_BATCHED_VISION_ATTN  Qwen3-VL vision tower with SDPA: one batched attent
                           per image plus a host read of the chunk lengths in every layer, when all images have the
                           same number of patches (starVLA/model/modules/vlm/fast_vision_attn.py). Same outputs and
                           gradients, bit for bit.
+STARVLA_VISION_POS_CACHE  Qwen3-VL vision tower: build the rotary position table and the position-embedding
+                          interpolation indices once per distinct grid instead of in every forward with a per-image
+                          host loop (starVLA/model/modules/vlm/fast_vision_pos.py). Same tensors; the lookup in the
+                          trainable position embedding still runs every step.
 STARVLA_DS_REDUCE_TO_OWNER  DeepSpeed ZeRO-2: reduce every gradient bucket to the rank that owns those parameters
                           (zero_optimization.use_multi_rank_bucket_allreduce = false) instead of all-reducing it to
                           every rank and discarding the copy on the ranks that do not own it. Each owner receives
