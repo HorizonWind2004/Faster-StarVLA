@@ -5,7 +5,10 @@ tokenization, image resize / normalization / patchification. That is CPU work, a
 images, done in the training process while the GPU waits. The data-loader workers have the samples first and spare
 time, so with STARVLA_PREP_IN_WORKERS they run the same steps and attach the result to the batch:
 
-    batch[0]["_prepared"] = {"qwen_inputs": {input_ids, attention_mask, pixel_values, image_grid_thw}}
+    batch[0]["_prepared"] = {"qwen_inputs": {input_ids, attention_mask, pixel_values, image_grid_thw, position_ids}}
+
+position_ids are Qwen3-VL's multimodal rotary positions (Qwen3VLModel.get_rope_index), a function of the token ids
+and image grids only, which the model otherwise computes at the start of every forward with a host loop per sample.
 
 The batch stays the list of samples every other consumer expects (evaluation, statistics); forward() uses the
 prepared tensors when present and builds them itself otherwise. The prompt construction below must stay identical to
@@ -23,6 +26,23 @@ class QwenOFTPreparedCollate:
         vla_data = cfg.datasets.vla_data
         self.cot_prompt = str(vla_data.get("CoT_prompt", "")) if "CoT_prompt" in vla_data else None
         self._processor = None
+        self._rope = None
+
+    def _rope_position_ids(self, inputs):
+        """Qwen3-VL's multimodal rotary position ids of the batch: Qwen3VLModel.get_rope_index, which reads only the
+        model config and these inputs. The model computes them at the start of every forward with a per-sample host
+        loop unless they are passed in."""
+        if self._rope is None:  # once per worker process
+            from types import SimpleNamespace
+
+            from transformers import AutoConfig, Qwen3VLModel
+
+            self._rope = (Qwen3VLModel.get_rope_index, SimpleNamespace(config=AutoConfig.from_pretrained(self.base_vlm)))
+        get_rope_index, owner = self._rope
+        position_ids, _ = get_rope_index(
+            owner, inputs["input_ids"], inputs.get("image_grid_thw"), None, attention_mask=inputs["attention_mask"]
+        )
+        return position_ids
 
     def _get_processor(self):
         if self._processor is None:  # once per worker process
@@ -51,7 +71,9 @@ class QwenOFTPreparedCollate:
         inputs = self._get_processor().apply_chat_template(
             messages, tokenize=True, padding=True, add_generation_prompt=True, return_dict=True, return_tensors="pt"
         )
-        batch[0]["_prepared"] = {"qwen_inputs": dict(inputs)}
+        qwen_inputs = dict(inputs)
+        qwen_inputs["position_ids"] = self._rope_position_ids(qwen_inputs)
+        batch[0]["_prepared"] = {"qwen_inputs": qwen_inputs}
         return batch
 
 
