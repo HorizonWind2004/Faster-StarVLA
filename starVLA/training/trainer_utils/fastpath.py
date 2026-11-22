@@ -7,6 +7,8 @@ STARVLA_PREP_AHEAD   prepare the next batch's model inputs (prompt construction 
 STARVLA_SKIP_LM_HEAD QwenOFT training reads the VLM's last hidden state only: call the backbone without the
                      language-model head, whose logits (batch x tokens x 151,936) are never used. Same hidden
                      state (the last decoder layer's output), same gradients.
+STARVLA_FAST_ATTN_MASK build the causal + padding attention mask with two broadcasted tensor ops instead of transformers'
+                     four nested torch.vmap calls (see starVLA/model/modules/vlm/fast_masks.py). Same boolean mask.
 """
 import os
 import queue

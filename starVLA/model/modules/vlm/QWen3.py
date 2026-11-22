@@ -8,6 +8,7 @@ from typing import Optional
 import torch
 from starVLA.model.tools import has_flash_attn  # unified flash-attn detection (GPU / NPU)
 from starVLA.training.trainer_utils import initialize_overwatch
+from starVLA.training.trainer_utils.fastpath import switch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
@@ -71,6 +72,10 @@ class _QWen3_VL_Interface(nn.Module):
         self.processor = processor
         self.config = config
         self._processor_lock = threading.Lock()
+        if switch("STARVLA_FAST_ATTN_MASK"):
+            from starVLA.model.modules.vlm import fast_masks
+
+            fast_masks.install()
 
         # alin qwen3 with qwen2.5
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
