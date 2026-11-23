@@ -250,6 +250,10 @@ def test_selection():
         os.environ["STARVLA_FAST"] = "exact"
         assert fast.selection() == fast.LEVELS["exact"] and not fast.enabled("compile_lm")
         assert not fast.enabled("reduce_to_owner")
+        os.environ["STARVLA_FAST"] = "all"
+        assert not fast.enabled("tf32") and not fast.enabled("reduce_to_owner")  # by name only
+        os.environ["STARVLA_FAST"] = "all,tf32"
+        assert fast.enabled("tf32") and fast.enabled("compile_lm")
         os.environ["STARVLA_FAST"] = "all,-worker_prep"
         assert fast.enabled("compile_vision") and not fast.enabled("worker_prep")
         assert fast.enabled("vision_attn_relaxed") and "vision_attn_relaxed" not in fast.LEVELS["exact"]

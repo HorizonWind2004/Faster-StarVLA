@@ -63,8 +63,11 @@ FAST_PATHS = {
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
                                 ("STARVLA_DS_REDUCE_TO_OWNER",)),
+    # a precision setting rather than a reordering; selectable by name only
+    "tf32": FastPath(False, "backbone", "precision:apply_tf32",
+                     "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
-BY_NAME_ONLY = frozenset({"reduce_to_owner"})
+BY_NAME_ONLY = frozenset({"reduce_to_owner", "tf32"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
     "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY),
