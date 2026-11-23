@@ -133,6 +133,22 @@ def _check(family):
           f"vision attention calls per forward {calls_before} -> {calls_after}")
 
 
+def _check_flash_attention():
+    """A backbone loaded with flash-attention: the SDPA-only fast paths and the compiled layers (Dynamo cannot trace
+    the flash-attn call) report "not applicable" instead of failing in the first training step."""
+    from starVLA import fast
+
+    model = _tiny("qwen2_5")
+    for config in (model.config, model.model.visual.config, model.model.language_model.config):
+        config._attn_implementation_internal = "flash_attention_2"  # cannot be loaded this way without a GPU
+    os.environ["STARVLA_FAST"] = "all"
+    applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
+    assert applied == ["hidden_only", "vision_pos"], applied
+    assert skipped == ["attn_mask", "vision_attn", "vision_attn_relaxed", "compile_lm", "compile_vision"], skipped
+    assert not getattr(model.model.visual.blocks, "_starvla_compiled", False)
+    print(f"ok flash-attention: {', '.join(applied)}; not applicable: {', '.join(skipped)}")
+
+
 def test_selection():
     from starVLA import fast
 
@@ -186,12 +202,17 @@ def test_qwen2_5_vl_bitwise():
     _in_subprocess("qwen2_5")
 
 
+def test_flash_attention_backbone():
+    _in_subprocess("flash")
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if len(sys.argv) > 1:
-        _check(sys.argv[1])
+        _check_flash_attention() if sys.argv[1] == "flash" else _check(sys.argv[1])
     else:
         test_selection()
         print("ok selection")
         test_qwen3_vl_bitwise()
         test_qwen2_5_vl_bitwise()
+        test_flash_attention_backbone()

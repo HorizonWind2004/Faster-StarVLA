@@ -54,8 +54,14 @@ def install():
 
 def apply(vlm):
     """Register the direct builder if the backbone's transformers model uses masking_utils."""
-    modeling = sys.modules.get(type(getattr(vlm, "model", None)).__module__)
+    from starVLA.fast import attention_implementation
+
+    model = getattr(vlm, "model", None)
+    modeling = sys.modules.get(type(model).__module__)
     if not hasattr(modeling, "create_causal_mask") or "sdpa" not in masking_utils.ALL_MASK_ATTENTION_FUNCTIONS:
+        return False
+    language_model = getattr(getattr(model, "model", None), "language_model", None)
+    if attention_implementation(language_model, model) != "sdpa":  # the other implementations use other builders
         return False
     install()
     return True

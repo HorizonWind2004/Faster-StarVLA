@@ -63,8 +63,14 @@ def _modules(vlm, path):
 
 
 def _apply(vlm, path, dynamic=True):
+    from starVLA.fast import attention_implementation
+
     layers = _modules(vlm, path)
     if layers is None or len(layers) == 0:
+        return False
+    # Dynamo cannot trace the flash-attn extension call: those layers stay eager
+    owner = _modules(vlm, path.rsplit(".", 1)[0])
+    if attention_implementation(owner, getattr(vlm, "model", None)) == "flash_attention_2":
         return False
     if not getattr(layers, "_starvla_compiled", False):
         _compile_forwards(layers, dynamic)

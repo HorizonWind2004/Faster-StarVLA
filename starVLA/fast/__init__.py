@@ -102,6 +102,16 @@ def enabled(name):
     return name in selection()
 
 
+def attention_implementation(*modules):
+    """The attention implementation ("sdpa", "flash_attention_2", "eager") of the first of these Hugging Face
+    (sub)models whose config states one."""
+    for module in modules:
+        implementation = getattr(getattr(module, "config", None), "_attn_implementation", None)
+        if implementation is not None:
+            return implementation
+    return None
+
+
 def _run(hook, target):
     """Apply the selected fast paths of one hook to `target`; returns (applied, not applicable) names."""
     applied, skipped = [], []

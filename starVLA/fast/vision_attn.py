@@ -60,6 +60,10 @@ def _window_layout(vision_model, grid_thw):
     return _uniform([b - a for a, b in zip(bounds, bounds[1:])])
 
 
+# attention implementations that keep the upstream code: flash-attention already makes one varlen call per layer
+_UPSTREAM_ONLY = ("eager", "flash_attention_2")
+
+
 def _bitwise(layout, heads, head_dim, dtype, device):
     """Is one attention call on [chunks, heads, length, head_dim] bitwise identical to one call per chunk here?"""
     if layout is None or _relaxed:
@@ -117,6 +121,8 @@ def install(modeling):
     layouts = {}  # (model, grid) -> (frames, windows)
 
     def model_forward(self, hidden_states, grid_thw, **kwargs):
+        if self.config._attn_implementation in _UPSTREAM_ONLY:
+            return original_model_forward(self, hidden_states, grid_thw, **kwargs)
         rows = tuple(tuple(row) for row in grid_thw.tolist())  # one host read per forward
         attention = self.blocks[0].attn
         weight = attention.qkv.weight
@@ -141,7 +147,7 @@ def install(modeling):
 
     def forward(self, hidden_states, cu_seqlens, rotary_pos_emb=None, position_embeddings=None, **kwargs):
         impl = self.config._attn_implementation
-        uniform = None if impl in ("eager", "flash_attention_2") else _layout(cu_seqlens)
+        uniform = None if impl in _UPSTREAM_ONLY else _layout(cu_seqlens)
         if uniform is None:
             return original(self, hidden_states, cu_seqlens, rotary_pos_emb=rotary_pos_emb,
                             position_embeddings=position_embeddings, **kwargs)
@@ -189,9 +195,13 @@ def apply_relaxed(vlm):
 
 def apply(vlm):
     """Batch the vision attention if the backbone's vision tower is one of the Qwen families."""
+    from starVLA.fast import attention_implementation
+
     visual = getattr(getattr(getattr(vlm, "model", None), "model", None), "visual", None)
     family = type(visual).__module__
     if visual is None or family not in _FAMILIES:
+        return False
+    if attention_implementation(visual, vlm.model) in _UPSTREAM_ONLY:
         return False
     install(sys.modules[family])
     return True
