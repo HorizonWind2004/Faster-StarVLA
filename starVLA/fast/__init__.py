@@ -11,7 +11,7 @@ callers are three hooks, none of them in a framework:
 
     get_vlm_model()            -> fast.accelerate_backbone(vlm)       every backbone interface
     the trainer                -> fast.accelerate_engine(engine)      the DeepSpeed engine
-    build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers
+    build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers (for worker_prep)
 
 To add a fast path: a module here with `apply(target) -> bool` (False = does not apply), and a line in FAST_PATHS.
 """
@@ -22,7 +22,7 @@ from typing import NamedTuple
 
 class FastPath(NamedTuple):
     exact: bool  # bitwise identical results
-    hook: str  # "backbone" | "engine" | "data"
+    hook: str  # "backbone" | "engine"
     apply: str  # "module:function" under starVLA.fast
     summary: str
     legacy: tuple = ()  # the per-path environment variables of the first release, still honoured
@@ -42,8 +42,8 @@ FAST_PATHS = {
     "vision_pos": FastPath(True, "backbone", "vision_pos:apply",
                            "vision position tables built once per grid size instead of in every forward",
                            ("STARVLA_VISION_POS_CACHE",)),
-    "worker_prep": FastPath(True, "data", "worker_prep:collate_for",
-                            "processor and prompt construction in the data-loader workers",
+    "worker_prep": FastPath(True, "backbone", "worker_prep:apply",
+                            "the interface's input construction (VLM processor) in the data-loader workers",
                             ("STARVLA_PREP_IN_WORKERS",)),
     "grad_norm": FastPath(True, "engine", "deepspeed:fused_grad_norm",
                           "DeepSpeed ZeRO-2 clipping norm without an fp64 copy of every gradient",
@@ -145,17 +145,9 @@ def accelerate_engine(engine):
 
 
 def worker_collate(cfg, collate_fn):
-    """`collate_fn`, or one that also builds the model inputs in the data-loader worker (see worker_prep)."""
+    """`collate_fn`, or one that also builds the backbone's inputs in the data-loader worker (see worker_prep)."""
     if not enabled("worker_prep"):
         return collate_fn
     from starVLA.fast import worker_prep
 
-    return worker_prep.collate_for(cfg) or collate_fn
-
-
-def prepared_inputs(examples, device):
-    """The model inputs a data-loader worker attached to this batch, on `device`; None when there are none."""
-    prepared = examples[0].get("_prepared") if examples else None
-    if prepared is None:
-        return None
-    return {key: value.to(device) for key, value in prepared["inputs"].items()}
+    return worker_prep.collate(cfg, collate_fn)

@@ -1,5 +1,6 @@
 """starVLA.fast on tiny random-weight backbones (CPU, seconds): the selection syntax, and that every exact backbone
-fast path leaves hidden states, logits and gradients bitwise identical on Qwen3-VL and Qwen2.5-VL.
+fast path leaves hidden states, logits and gradients bitwise identical on Qwen3-VL and Qwen2.5-VL. With
+STARVLA_TEST_VLMS set to model directories, also worker_prep with their real processors.
 
     python tests/test_fast_paths.py        # or: pytest tests/test_fast_paths.py
 """
@@ -144,9 +145,98 @@ def _check_flash_attention():
     os.environ["STARVLA_FAST"] = "all"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["hidden_only", "vision_pos"], applied
-    assert skipped == ["attn_mask", "vision_attn", "vision_attn_relaxed", "compile_lm", "compile_vision"], skipped
+    # worker_prep: this bare model has no processor
+    assert skipped == ["attn_mask", "vision_attn", "worker_prep", "vision_attn_relaxed", "compile_lm", "compile_vision"], skipped
     assert not getattr(model.model.visual.blocks, "_starvla_compiled", False)
     print(f"ok flash-attention: {', '.join(applied)}; not applicable: {', '.join(skipped)}")
+
+
+class _Samples:
+    """Six samples the way the LeRobot datasets return them: two views, an instruction, a state, an action chunk."""
+
+    def __len__(self):
+        return 6
+
+    def __getitem__(self, index):
+        import numpy as np
+        from PIL import Image
+
+        rng = np.random.default_rng(index)
+        return {"image": [Image.fromarray(rng.integers(0, 256, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
+                "lang": "put the bowl on the plate" + " and then close the drawer" * (index % 3),
+                "state": rng.uniform(-1, 1, (1, 8)).astype(np.float32), "action": rng.normal(size=(8, 7))}
+
+
+def _same_batch(batch):
+    return batch
+
+
+def _check_worker_prep(model_dir):
+    """worker_prep with the real processor of `model_dir` (no weights are loaded): what the interface returns for a
+    batch whose inputs a data-loader worker built is what it returns without workers, for a framework that passes the
+    instruction unchanged and for two that edit it; any other call is answered by the interface itself."""
+    import torch.nn as nn
+    from omegaconf import OmegaConf
+    from torch.utils.data import DataLoader
+    from transformers import AutoConfig, AutoProcessor
+
+    from starVLA import fast
+    from starVLA.fast import worker_prep
+    from starVLA.model.framework.share_tools import add_discretized_state_to_instruction
+
+    if "Qwen2.5-VL" in model_dir:
+        from transformers import Qwen2_5_VLModel as core_class
+
+        from starVLA.model.modules.vlm.QWen2_5 import _QWen_VL_Interface as interface_class
+    else:
+        from transformers import Qwen3VLModel as core_class
+
+        from starVLA.model.modules.vlm.QWen3 import _QWen3_VL_Interface as interface_class
+    cfg = OmegaConf.create({"framework": {"name": "QwenGR00T", "qwenvl": {"base_vlm": model_dir},
+                                          "action_model": {"action_horizon": 8}}, "datasets": {"vla_data": {}}})
+    core = core_class.__new__(core_class)  # get_rope_index reads only the config
+    nn.Module.__init__(core)
+    core.config = AutoConfig.from_pretrained(model_dir)
+    interface = interface_class.__new__(interface_class)
+    nn.Module.__init__(interface)
+    interface.processor = AutoProcessor.from_pretrained(model_dir)
+    interface.processor.tokenizer.padding_side = "left"
+    interface.config = cfg
+    interface.__dict__["model"] = SimpleNamespace(device=torch.device("cpu"), model=core)
+    original = interface.build_qwenvl_inputs
+
+    os.environ["STARVLA_FAST"] = "worker_prep"
+    applied, skipped = fast._run("backbone", interface)
+    assert applied == ["worker_prep"] and not skipped, (applied, skipped)
+
+    suffix = f" Please predict the next 8 robot actions: <action>{'🔍' * 8}<action>."
+    with_state = lambda batch: add_discretized_state_to_instruction([e["lang"] for e in batch], [e["state"] for e in batch])
+    prompts = {"QwenGR00T": lambda batch: [e["lang"] for e in batch], "QwenPI_v3": with_state,
+               "QwenOFT": lambda batch: [instruction + suffix for instruction in with_state(batch)]}
+    for framework, prompt in prompts.items():
+        cfg.framework.name = framework
+        loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=fast.worker_collate(cfg, _same_batch))
+        used = worker_prep.stats["used"]
+        for batch in loader:
+            images, instructions = [e["image"] for e in batch], prompt(batch)
+            got = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+            reference = original(images=images, instructions=instructions)
+            position_ids, _ = core.get_rope_index(input_ids=reference["input_ids"], image_grid_thw=reference["image_grid_thw"],
+                                                  attention_mask=reference["attention_mask"])
+            assert type(got) is type(reference) and set(got.keys()) == set(reference.keys()) | {"position_ids"}
+            for key in reference.keys():
+                assert torch.equal(got[key], reference[key]) and got[key].dtype == reference[key].dtype, (framework, key)
+            assert torch.equal(got["position_ids"], position_ids), framework
+        assert worker_prep.stats["used"] == used + 3, (framework, worker_prep.stats)
+    # a prompt the workers did not expect, and a call with other images: the interface answers itself
+    batch = next(iter(loader))
+    images = [e["image"] for e in batch]
+    other = interface.build_qwenvl_inputs(images=images, instructions=["something else"] * 2)
+    assert "position_ids" not in other and worker_prep.stats["other prompt"] == 1
+    fresh = interface.build_qwenvl_inputs(images=[list(sample) for sample in images][::-1], instructions=prompts["QwenOFT"](batch)[::-1])
+    assert "position_ids" not in fresh and worker_prep.stats["used"] == 9
+    print(f"ok worker_prep {os.path.basename(model_dir)}: inputs built in workers are identical for "
+          f"{', '.join(prompts)} ({', '.join(sorted(reference.keys()))} + position_ids)")
 
 
 def test_selection():
@@ -206,13 +296,26 @@ def test_flash_attention_backbone():
     _in_subprocess("flash")
 
 
+def test_worker_prep():
+    """Needs real processors: STARVLA_TEST_VLMS=<dir of Qwen3-VL-4B-Instruct>,<dir of Qwen2.5-VL-3B-Instruct>."""
+    model_dirs = [d for d in os.environ.get("STARVLA_TEST_VLMS", "").split(",") if d]
+    if not model_dirs:
+        print("skipped worker_prep: STARVLA_TEST_VLMS is not set")
+    for model_dir in model_dirs:
+        _in_subprocess(model_dir)
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if len(sys.argv) > 1:
-        _check_flash_attention() if sys.argv[1] == "flash" else _check(sys.argv[1])
+        if os.path.isdir(sys.argv[1]):
+            _check_worker_prep(sys.argv[1])
+        else:
+            _check_flash_attention() if sys.argv[1] == "flash" else _check(sys.argv[1])
     else:
         test_selection()
         print("ok selection")
         test_qwen3_vl_bitwise()
         test_qwen2_5_vl_bitwise()
         test_flash_attention_backbone()
+        test_worker_prep()
