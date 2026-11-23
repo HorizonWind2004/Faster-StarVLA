@@ -246,6 +246,38 @@ class Qwenvl_OFT(baseframework):
 
         return {"action_loss": action_loss}
 
+    def prepare_example(self, example: dict):
+        """Everything predict_action does to one example before the model runs (CPU only), so that a server can
+        do it while the GPU is busy with the previous batch. predict_action_prepared takes a list of the results."""
+        images = to_pil_preserve(example["image"])
+        instruction = example["lang"]
+        if "state" in example:
+            instruction = self.add_discretized_state_to_instruction([instruction], [example["state"]])[0]
+        train_obs_image_size = getattr(self.config.datasets.vla_data, "obs_image_size", None)
+        if train_obs_image_size:
+            images = resize_images([images], target_size=train_obs_image_size)[0]
+        action_tokens = self.action_token * self.chunk_len
+        instruction = instruction + f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
+        return self.qwen_vl_interface.prepare_one(images, instruction)
+
+    @torch.inference_mode()
+    def predict_action_prepared(self, parts, **kwargs) -> dict:
+        """predict_action for examples already passed through prepare_example: same inputs, same actions."""
+        qwen_inputs = self.qwen_vl_interface.merge_prepared(parts)
+        if switch("STARVLA_INFER_SKIP_LM_HEAD"):
+            last_hidden = self.qwen_vl_interface.last_layer_hidden_state(**qwen_inputs)
+        else:
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                last_hidden = self.qwen_vl_interface(
+                    **qwen_inputs, output_attentions=False, output_hidden_states=True, return_dict=True
+                ).hidden_states[-1]
+        with torch.autocast("cuda", dtype=torch.float32):
+            action_queries = self._gather_action_token_embeddings(
+                last_hidden, qwen_inputs.get("input_ids", None), action_token_id=self.action_token_id
+            )
+            pred_actions = self.action_model.predict_action(action_queries)
+        return {"normalized_actions": pred_actions.detach().cpu().numpy()}
+
     @torch.inference_mode()
     def predict_action(
         self,

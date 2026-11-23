@@ -152,29 +152,22 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
-    def build_qwenvl_inputs_threaded(self, images, instructions, threads=8):
-        """build_qwenvl_inputs(images, instructions) for inference, with the processor run per sample on a thread
-        pool (image resizing / normalization and the tokenizer release the GIL) and the samples padded together
-        afterwards the way the tokenizer pads a batch. Same tensors as the batch call."""
-        from concurrent.futures import ThreadPoolExecutor
+    def prepare_one(self, images, instruction):
+        """The processor output of one sample (CPU tensors): what build_qwenvl_inputs computes for a batch of one."""
+        content = [{"type": "image", "image": img} for img in images]
+        if "CoT_prompt" in self.config.datasets.vla_data:
+            prompt = self.config.datasets.vla_data.get("CoT_prompt", "").replace("{instruction}", instruction)
+        else:
+            prompt = instruction
+        content.append({"type": "text", "text": prompt})
+        return self.processor.apply_chat_template(
+            [[{"role": "user", "content": content}]], tokenize=True, padding=True, add_generation_prompt=True,
+            return_dict=True, return_tensors="pt",
+        )
 
-        pool = self.__dict__.get("_prep_pool")
-        if pool is None or pool._max_workers != threads:
-            pool = self.__dict__["_prep_pool"] = ThreadPoolExecutor(max_workers=threads)
-
-        def one(i):
-            content = [{"type": "image", "image": img} for img in images[i]]
-            if "CoT_prompt" in self.config.datasets.vla_data:
-                prompt = self.config.datasets.vla_data.get("CoT_prompt", "").replace("{instruction}", instructions[i])
-            else:
-                prompt = instructions[i]
-            content.append({"type": "text", "text": prompt})
-            return self.processor.apply_chat_template(
-                [[{"role": "user", "content": content}]], tokenize=True, padding=True, add_generation_prompt=True,
-                return_dict=True, return_tensors="pt",
-            )
-
-        parts = list(pool.map(one, range(len(images))))
+    def merge_prepared(self, parts):
+        """Samples from prepare_one padded together the way the tokenizer pads a batch: the tensors
+        build_qwenvl_inputs returns for the same samples in the same order."""
         tok = self.processor.tokenizer
         length = max(p["input_ids"].shape[1] for p in parts)
         ids = torch.full((len(parts), length), tok.pad_token_id, dtype=parts[0]["input_ids"].dtype)
@@ -184,13 +177,24 @@ class _QWen3_VL_Interface(nn.Module):
             sl = slice(length - n, length) if tok.padding_side == "left" else slice(0, n)
             ids[i, sl] = p["input_ids"][0]
             mask[i, sl] = p["attention_mask"][0]
-        batch = parts[0]
-        extra = set(batch.keys()) - {"input_ids", "attention_mask", "pixel_values", "image_grid_thw"}
+        extra = set(parts[0].keys()) - {"input_ids", "attention_mask", "pixel_values", "image_grid_thw"}
         assert not extra, f"unexpected processor outputs {extra}"
-        batch["input_ids"], batch["attention_mask"] = ids, mask
-        batch["pixel_values"] = torch.cat([p["pixel_values"] for p in parts], dim=0)
-        batch["image_grid_thw"] = torch.cat([p["image_grid_thw"] for p in parts], dim=0)
+        batch = type(parts[0])(data={
+            "input_ids": ids, "attention_mask": mask,
+            "pixel_values": torch.cat([p["pixel_values"] for p in parts], dim=0),
+            "image_grid_thw": torch.cat([p["image_grid_thw"] for p in parts], dim=0),
+        })
         return batch.to(self.model.device)
+
+    def build_qwenvl_inputs_threaded(self, images, instructions, threads=8):
+        """build_qwenvl_inputs(images, instructions) for inference, with the processor run per sample on a thread
+        pool (image resizing / normalization and the tokenizer release the GIL). Same tensors as the batch call."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = self.__dict__.get("_prep_pool")
+        if pool is None or pool._max_workers != threads:
+            pool = self.__dict__["_prep_pool"] = ThreadPoolExecutor(max_workers=threads)
+        return self.merge_prepared(list(pool.map(lambda i: self.prepare_one(images[i], instructions[i]), range(len(images)))))
 
     def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
         """
