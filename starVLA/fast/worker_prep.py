@@ -14,9 +14,9 @@ No framework and no interface contains code for this:
   * the worker runs the interface's own `build_qwenvl_inputs`, on a stand-in for the interface that has the
     processor and the config but no model. `apply` checks once, on a small batch, that the stand-in returns exactly
     what the interface returns; an interface whose input construction needs more than that is left alone.
-  * the worker's result is used only for a call with the very image objects of that batch and the very prompts the
-    worker used. Any other call (inference, a framework that edits the images, a prompt the workers did not expect)
-    is answered by the interface as before.
+  * the worker's result is used only for a call with the images of that batch (the same objects, or copies with the
+    same pixels) and the very prompts the worker used. Any other call (inference, a framework that edits the images,
+    a prompt the workers did not expect) is answered by the interface as before.
 
 The one thing a worker cannot see is how a framework edits the prompt before the call. Most frameworks pass the
 sample's "lang" unchanged, which is the default; the others register their edit with @prompt("<framework name>")
@@ -28,6 +28,7 @@ at the start of every forward with a per-sample host loop.
 import pickle
 import threading
 import weakref
+from functools import partial
 from types import SimpleNamespace
 
 import torch
@@ -40,6 +41,10 @@ _PROMPTS = {}  # framework name -> factory(cfg) -> function(examples) -> the ins
 
 
 def prompt(framework_name):
+    """Register how a framework edits the prompt: a factory that gets the training config and returns a picklable
+    function from the samples of a batch to the instructions of the framework's `build_qwenvl_inputs` call (a tuple
+    of them for a framework that makes several calls per step)."""
+
     def register(factory):
         _PROMPTS[framework_name] = factory
         return factory
@@ -58,16 +63,37 @@ def _lang_with_state(examples):
     return instructions
 
 
+def _with_action_slots(examples, instructions_of, chunk_len, slots):
+    suffix = f" Please predict the next {chunk_len} robot actions: <action>{'🔍' * slots}<action>."
+    return [instruction + suffix for instruction in instructions_of(examples)]
+
+
+def _query_before_and_after(examples, query):
+    return [query + example["lang"] for example in examples], [example["lang"] + query for example in examples]
+
+
 @prompt("QwenOFT")
 def _qwen_oft(cfg):
     chunk_len = int(cfg.framework.action_model.action_horizon)
-    suffix = f" Please predict the next {chunk_len} robot actions: <action>{'🔍' * chunk_len}<action>."
-    return lambda examples: [instruction + suffix for instruction in _lang_with_state(examples)]
+    return partial(_with_action_slots, instructions_of=_lang_with_state, chunk_len=chunk_len, slots=chunk_len)
+
+
+@prompt("QwenAdapter")
+def _qwen_adapter(cfg):
+    action_model = cfg.framework.action_model
+    return partial(_with_action_slots, instructions_of=_lang, chunk_len=action_model.get("num_actions_chunk", None),
+                   slots=action_model.get("action_query_num", 64))
 
 
 @prompt("QwenPI_v3")
 def _qwen_pi_v3(cfg):
     return _lang_with_state
+
+
+@prompt("LangForce")
+def _lang_force(cfg):
+    queries = int(cfg.framework.qwenvl.get("num_latent_action_query", 64))
+    return partial(_query_before_and_after, query="".join(f"<|action_{i}|>" for i in range(queries)))
 
 
 # ---------------------------------------------------------------------------------------------- worker side
@@ -99,16 +125,24 @@ class Builder:
 
 
 _arrived = weakref.WeakValueDictionary()  # id(first image of a batch) -> its Prepared, in the consuming process
+_lock = threading.Lock()  # batches arrive in the DataLoader's pinning thread
+
+
+def _same_picture(a, b):
+    """Two PIL images with the same pixels (a framework that resizes to the size the images already have)."""
+    try:
+        return a.mode == b.mode == "RGB" and a.size == b.size and a.tobytes() == b.tobytes()
+    except AttributeError:
+        return False
 
 
 class Prepared:
-    """The inputs a worker built for one batch. It travels as batch[0]["_prepared"] and, where the batch is consumed,
-    is found again through the batch's first image object."""
+    """The inputs a worker built for one batch: one (instructions, inputs) pair per call the framework will make.
+    It travels as batch[0]["_prepared"] and, where the batch is consumed, is found again through the batch's images."""
 
-    def __init__(self, images, instructions, inputs):
+    def __init__(self, images, calls):
         self.images = [tuple(sample) for sample in images]  # the same objects as in the batch, also after pickling
-        self.instructions = list(instructions)
-        self.inputs = inputs
+        self.calls = calls
         self._announce()
 
     def __setstate__(self, state):
@@ -117,17 +151,19 @@ class Prepared:
 
     def _announce(self):
         if self.images and self.images[0]:
-            _arrived[id(self.images[0][0])] = self
+            with _lock:
+                _arrived[id(self.images[0][0])] = self
 
     def pin_memory(self):  # called by the DataLoader's pinning thread
-        for key, value in self.inputs.items():
-            if torch.is_tensor(value):
-                self.inputs[key] = value.pin_memory()
+        for _, inputs in self.calls:
+            for key, value in inputs.items():
+                if torch.is_tensor(value):
+                    inputs[key] = value.pin_memory()
         return self
 
     def same_images(self, images):
         return len(images) == len(self.images) and all(
-            len(sample) == len(mine) and all(a is b for a, b in zip(sample, mine))
+            len(sample) == len(mine) and all(a is b or _same_picture(a, b) for a, b in zip(sample, mine))
             for sample, mine in zip(images, self.images))
 
 
@@ -151,8 +187,10 @@ class Collate:
         if self._builder is None:  # once per worker process
             self._builder = pickle.loads(self.payload)
         images = [example["image"] for example in batch]
-        instructions = self.instructions_of(batch)
-        batch[0]["_prepared"] = Prepared(images, instructions, self._builder(images, instructions))
+        calls = self.instructions_of(batch)
+        calls = calls if isinstance(calls, tuple) else (calls,)
+        batch[0]["_prepared"] = Prepared(images, [(list(instructions), self._builder(images, instructions))
+                                                  for instructions in calls])
         return batch
 
 
@@ -166,22 +204,27 @@ _reported = threading.Event()
 def _take(images, instructions):
     """The inputs a worker built for exactly this call, or None."""
     try:
-        prepared = _arrived.get(id(images[0][0]))
+        with _lock:
+            waiting = _arrived.get(id(images[0][0]))  # the batch's own image objects
+            waiting = [waiting] if waiting is not None else list(_arrived.values())  # or copies of them
     except (IndexError, KeyError, TypeError):
         return None
-    if prepared is None or not prepared.same_images(images):
+    prepared = next((candidate for candidate in waiting if candidate.same_images(images)), None)
+    if prepared is None:
         return None
-    if list(instructions) != prepared.instructions:
-        stats["other prompt"] += 1
-        if not _reported.is_set():
-            _reported.set()
-            print("[starVLA.fast] worker_prep: this framework edits the prompt in a way the data-loader workers do not "
-                  "know, so the inputs are built in the training process. Register the edit with @prompt in "
-                  f"starVLA/fast/worker_prep.py.\n  framework: {instructions[0]!r}\n  workers:   "
-                  f"{prepared.instructions[0]!r}", flush=True)
-        return None
-    stats["used"] += 1
-    return prepared.inputs
+    instructions = list(instructions)
+    for theirs, inputs in prepared.calls:
+        if theirs == instructions:
+            stats["used"] += 1
+            return inputs
+    stats["other prompt"] += 1
+    if not _reported.is_set():
+        _reported.set()
+        print("[starVLA.fast] worker_prep: this framework edits the prompt in a way the data-loader workers do not "
+              "know, so the inputs are built in the training process. Register the edit with @prompt in "
+              f"starVLA/fast/worker_prep.py.\n  framework: {instructions[0]!r}\n  workers:   "
+              f"{prepared.calls[0][0][0]!r}", flush=True)
+    return None
 
 
 def _same(a, b):

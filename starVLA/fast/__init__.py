@@ -1,7 +1,7 @@
 """starVLA.fast: opt-in fast paths for training and inference, behind one setting.
 
     export STARVLA_FAST=exact    # every fast path whose results are bitwise identical to the default code
-    export STARVLA_FAST=all      # exact + the compiled layers (same function, different floating-point rounding)
+    export STARVLA_FAST=all      # exact + the paths that change floating-point rounding only (compiled layers, SDPA)
     export STARVLA_FAST=exact,-worker_prep,compile_lm    # a level and/or names; "-name" removes one
     unset, "off" or "0"          # the default code paths
 
@@ -28,7 +28,10 @@ class FastPath(NamedTuple):
     legacy: tuple = ()  # the per-path environment variables of the first release, still honoured
 
 
-FAST_PATHS = {
+FAST_PATHS = {  # applied in this order
+    "sdpa": FastPath(False, "backbone", "attention:use_sdpa",
+                     "PyTorch SDPA attention where the config asks for flash-attention: the same attention from "
+                     "another kernel, and the one the fast paths below accelerate"),
     "attn_mask": FastPath(True, "backbone", "attn_mask:apply",
                           "causal + padding attention mask from two tensor ops instead of nested torch.vmap",
                           ("STARVLA_FAST_ATTN_MASK",)),

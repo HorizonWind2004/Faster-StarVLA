@@ -135,20 +135,28 @@ def _check(family):
 
 
 def _check_flash_attention():
-    """A backbone loaded with flash-attention: the SDPA-only fast paths and the compiled layers (Dynamo cannot trace
-    the flash-attn call) report "not applicable" instead of failing in the first training step."""
+    """A backbone loaded with flash-attention. At the exact level it keeps flash-attention and the SDPA-only fast
+    paths report "not applicable" instead of failing in the first training step; at the all level it is switched to
+    SDPA first, and then they apply."""
     from starVLA import fast
+    from starVLA.fast.attention import _implementations
 
     model = _tiny("qwen2_5")
     for config in (model.config, model.model.visual.config, model.model.language_model.config):
         config._attn_implementation_internal = "flash_attention_2"  # cannot be loaded this way without a GPU
-    os.environ["STARVLA_FAST"] = "all"
+    os.environ["STARVLA_FAST"] = "exact"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["hidden_only", "vision_pos"], applied
-    # worker_prep: this bare model has no processor
-    assert skipped == ["attn_mask", "vision_attn", "worker_prep", "vision_attn_relaxed", "compile_lm", "compile_vision"], skipped
-    assert not getattr(model.model.visual.blocks, "_starvla_compiled", False)
-    print(f"ok flash-attention: {', '.join(applied)}; not applicable: {', '.join(skipped)}")
+    assert skipped == ["attn_mask", "vision_attn", "worker_prep"], skipped  # worker_prep: no processor on this bare model
+    assert _implementations(model) == {"flash_attention_2"}
+    os.environ["STARVLA_FAST"] = "all"
+    applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
+    assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
+                       "compile_lm", "compile_vision"], applied
+    assert skipped == ["worker_prep"] and _implementations(model) == {"sdpa"}
+    with torch.no_grad():  # an inference call: the compiled layers are for training calls
+        model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
+    print(f"ok flash-attention: kept at the exact level, SDPA at the all level ({', '.join(applied)})")
 
 
 class _Samples:
@@ -248,7 +256,8 @@ def test_selection():
             del os.environ[var]
         assert fast.selection() == frozenset()
         os.environ["STARVLA_FAST"] = "exact"
-        assert fast.selection() == fast.LEVELS["exact"] and not fast.enabled("compile_lm")
+        assert fast.selection() == fast.LEVELS["exact"] and not fast.enabled("compile_lm") and not fast.enabled("sdpa")
+        assert next(iter(fast.FAST_PATHS)) == "sdpa"  # applied before the paths that are written for SDPA
         assert not fast.enabled("reduce_to_owner")
         os.environ["STARVLA_FAST"] = "all"
         assert not fast.enabled("tf32") and not fast.enabled("reduce_to_owner")  # by name only
@@ -265,7 +274,7 @@ def test_selection():
                          "DS_FUSED_GRAD_NORM", "COMPILE_LM", "DS_PLAIN_ALLREDUCE", "COMPILE_VISION")
         for name in first_release:
             os.environ["STARVLA_" + name] = "1"
-        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed"}
+        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa"}
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
         assert fast.selection() == fast.LEVELS["exact"]
