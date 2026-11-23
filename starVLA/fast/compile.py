@@ -1,6 +1,6 @@
-"""Regional torch.compile of the Qwen3-VL decoder layers and vision blocks for training.
+"""Regional torch.compile of the backbone's decoder layers and vision blocks for training.
 
-At the training shape (16 x 205 tokens) one forward + backward of the 36 decoder layers runs about 10,000 small GPU
+Measured on Qwen3-VL-4B: at the training shape (16 x 205 tokens) one forward + backward of the 36 decoder layers runs about 10,000 small GPU
 ops: per layer and direction a handful of matrix products and dozens of elementwise ops (RMSNorm in fp32, rotary
 embedding, SiLU gating, casts, broadcasts). The matrix products take a third of the time; the rest is the latency of
 launching the small ops one by one. Compiling each layer's forward with Inductor fuses the elementwise chains of the
@@ -14,7 +14,6 @@ import gc
 
 import torch
 
-_installed = set()
 _gc = {"layers": 0, "calls": 0, "frozen": False}
 _FREEZE_AFTER_STEPS = 4  # training forwards before the freeze
 
@@ -54,16 +53,31 @@ def _freeze_compiler_objects():
         _gc["frozen"] = True
 
 
-def install(qwen_model, dynamic=True):
-    """Compile the decoder layers of a Qwen3VLForConditionalGeneration."""
-    if "lm" not in _installed:
-        _compile_forwards(qwen_model.model.language_model.layers, dynamic)
-        _installed.add("lm")
+def _modules(vlm, path):
+    target = vlm
+    for name in path.split("."):
+        target = getattr(target, name, None)
+        if target is None:
+            return None
+    return target
 
 
-def install_vision(qwen_model, dynamic=True):
-    """Compile the vision blocks of a Qwen3VLForConditionalGeneration (24 blocks; about 60 ops each per direction).
-    Meant to be used with the batched vision attention (fast_vision_attn), whose per-layer code has no host reads."""
-    if "vision" not in _installed:
-        _compile_forwards(qwen_model.model.visual.blocks, dynamic)
-        _installed.add("vision")
+def _apply(vlm, path, dynamic=True):
+    layers = _modules(vlm, path)
+    if layers is None or len(layers) == 0:
+        return False
+    if not getattr(layers, "_starvla_compiled", False):
+        _compile_forwards(layers, dynamic)
+        layers._starvla_compiled = True
+    return True
+
+
+def apply_lm(vlm):
+    """Compile the decoder layers of the backbone's language model (`model.model.language_model.layers`)."""
+    return _apply(vlm, "model.model.language_model.layers")
+
+
+def apply_vision(vlm):
+    """Compile the blocks of the backbone's vision tower (`model.model.visual.blocks`). Meant to be used with
+    vision_attn, whose per-layer code has no host reads."""
+    return _apply(vlm, "model.model.visual.blocks")

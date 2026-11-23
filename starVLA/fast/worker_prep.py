@@ -1,25 +1,46 @@
-"""collate_fn that also builds the model inputs of a QwenOFT training batch in the data-loader worker.
+"""Build the model inputs of a training batch in the data-loader worker.
 
-QwenOFT.forward() turns a batch (list of samples) into Qwen3-VL inputs with the VLM's processor: chat template,
-tokenization, image resize / normalization / patchification. That is CPU work, about 0.19 s per step at batch 16 x 2
-images, done in the training process while the GPU waits. The data-loader workers have the samples first and spare
-time, so with STARVLA_PREP_IN_WORKERS they run the same steps and attach the result to the batch:
+A framework's forward() turns a batch (list of samples) into VLM inputs with the VLM's processor: chat template,
+tokenization, image resize / normalization / patchification. That is CPU work (about 0.19 s per step for QwenOFT at
+batch 16 x 2 images), done in the training process while the GPU waits. The data-loader workers have the samples
+first and spare time, so they run the same steps and attach the result to the batch:
 
-    batch[0]["_prepared"] = {"qwen_inputs": {input_ids, attention_mask, pixel_values, image_grid_thw, position_ids}}
+    batch[0]["_prepared"] = {"inputs": {input_ids, attention_mask, pixel_values, image_grid_thw, ...}}
 
-position_ids are Qwen3-VL's multimodal rotary positions (Qwen3VLModel.get_rope_index), a function of the token ids
-and image grids only, which the model otherwise computes at the start of every forward with a host loop per sample.
+The batch stays the list of samples every other consumer expects (evaluation, statistics). In forward() the
+framework takes `fast.prepared_inputs(examples, device)` when present and builds the inputs itself otherwise.
 
-The batch stays the list of samples every other consumer expects (evaluation, statistics); forward() uses the
-prepared tensors when present and builds them itself otherwise. The prompt construction below must stay identical to
-QwenOFT._build_training_inputs and _QWen3_VL_Interface.build_qwenvl_inputs.
+Input construction is specific to a framework (its prompt) and a processor, so each supported combination registers
+a builder here with @builder("<framework name>"); `collate_for` returns None for a config no builder accepts, and
+the default collate_fn is used. A builder must produce exactly what the framework's forward() would.
 """
 from starVLA.model.framework.share_tools import add_discretized_state_to_instruction
 
 ACTION_TOKEN = "🔍"  # QwenOFT.action_token
 
 
-class QwenOFTPreparedCollate:
+_BUILDERS = {}  # framework name -> factory(cfg) -> collate_fn, or None if it does not handle this config
+
+
+def builder(framework_name):
+    def register(factory):
+        _BUILDERS[framework_name] = factory
+        return factory
+
+    return register
+
+
+def collate_for(cfg):
+    """The preparing collate_fn for this config, or None when no builder handles it."""
+    factory = _BUILDERS.get(str(cfg.framework.get("name", "")))
+    return factory(cfg) if factory is not None else None
+
+
+class QwenOFTInputs:
+    """QwenOFT on a Qwen3-VL backbone. The prompt construction must stay identical to
+    QwenOFT._build_training_inputs and _QWen3_VL_Interface.build_qwenvl_inputs. Also computes Qwen3-VL's multimodal
+    rotary position ids, which the model otherwise derives at the start of every forward with a host loop."""
+
     def __init__(self, cfg):
         self.base_vlm = str(cfg.framework.qwenvl.base_vlm)
         self.chunk_len = int(cfg.framework.action_model.action_horizon)
@@ -73,16 +94,14 @@ class QwenOFTPreparedCollate:
         )
         qwen_inputs = dict(inputs)
         qwen_inputs["position_ids"] = self._rope_position_ids(qwen_inputs)
-        batch[0]["_prepared"] = {"qwen_inputs": qwen_inputs}
+        batch[0]["_prepared"] = {"inputs": qwen_inputs}
         return batch
 
 
-def prepared_collate_for(cfg):
-    """The preparing collate_fn for this config, or None when the framework / VLM has none."""
-    if str(cfg.framework.get("name", "")) != "QwenOFT":
-        return None
+@builder("QwenOFT")
+def _qwen_oft(cfg):
     base_vlm = str(cfg.framework.qwenvl.base_vlm)
     # only the VLMs that modules/vlm/get_vlm_model routes to the Qwen3-VL interface
     if "Qwen2.5-VL" in base_vlm or "nora" in base_vlm.lower() or "Qwen3-VL" not in base_vlm:
         return None
-    return QwenOFTPreparedCollate(cfg)
+    return QwenOFTInputs(cfg)

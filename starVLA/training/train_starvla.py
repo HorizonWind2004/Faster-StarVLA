@@ -322,9 +322,9 @@ class VLATrainer(TrainerUtils):
     def _create_data_iterators(self):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
-        from starVLA.training.trainer_utils.fastpath import apply_deepspeed_switches
+        from starVLA import fast
 
-        apply_deepspeed_switches(self.model)  # no-op unless a STARVLA_DS_* switch is set
+        fast.accelerate_engine(self.model)  # optimizer-side fast paths; nothing unless STARVLA_FAST selects them
 
     def _get_next_batch(self):
         """Get next batch (automatically handle data loop)."""

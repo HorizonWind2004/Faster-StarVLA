@@ -1,21 +1,24 @@
-"""Memoized position indices for the Qwen3-VL vision tower.
+"""Memoized position tables for the Qwen vision towers.
 
-Qwen3VLVisionModel computes, in every forward and with a Python loop over the images that reads GPU scalars back to
-the host, two things that depend only on the grid sizes (grid_thw), not on any weight:
+The vision models of Qwen2-VL, Qwen2.5-VL and Qwen3-VL compute, in every forward and with a Python loop over the
+images that reads GPU scalars back to the host, things that depend only on the grid sizes (grid_thw), not on any
+weight:
 
   rot_pos_emb(grid_thw)                 the rotary position table of every patch (a lookup in a fixed buffer)
-  fast_pos_embed_interpolate(grid_thw)  the four neighbour indices and bilinear weights of every patch
+  get_window_index(grid_thw)            Qwen2.5-VL: the window order of the patches and the window boundaries
+  fast_pos_embed_interpolate(grid_thw)  Qwen3-VL: the four neighbour indices and bilinear weights of every patch
 
-In training every batch has the same grids (all views are resized to one resolution), so both are built once per
-distinct grid_thw and reused: the rotary table as a whole, and the indices / weights of the interpolation. The part
-of fast_pos_embed_interpolate that touches the trainable position embedding (lookup, weighting, the sum of the four
-neighbours, the per-image reordering) runs every time exactly as upstream, so its values and gradients are the
-upstream ones. About 27 ms of host time per step at 32 images.
+In training every batch has the same grids (all views are resized to one resolution), so each is built once per
+distinct grid_thw and reused. Of fast_pos_embed_interpolate only the indices and weights are reused: the part that
+touches the trainable position embedding (lookup, weighting, the sum of the four neighbours, the per-image
+reordering) runs every time exactly as upstream, so its values and gradients are the upstream ones. About 27 ms of
+host time per step at 32 images on Qwen3-VL.
 """
-import torch
-from transformers.models.qwen3_vl import modeling_qwen3_vl as qwen3
+import sys
 
-_installed = False
+import torch
+
+_installed = set()
 _MAX_ENTRIES = 16
 
 
@@ -30,12 +33,9 @@ def _remember(cache, key, value):
     return value
 
 
-def install():
-    global _installed
-    if _installed:
-        return
-    original_rot = qwen3.Qwen3VLVisionModel.rot_pos_emb
-    rot_cache, interp_cache = {}, {}
+def _memoize_rot_pos_emb(model_class):
+    original_rot = model_class.rot_pos_emb
+    rot_cache = {}
 
     def rot_pos_emb(self, grid_thw):
         inv_freq = self.rotary_pos_emb.inv_freq
@@ -44,6 +44,30 @@ def install():
         if hit is None:
             hit = _remember(rot_cache, key, original_rot(self, grid_thw).detach())
         return hit
+
+    rot_pos_emb._starvla_original = original_rot
+    model_class.rot_pos_emb = rot_pos_emb
+
+
+def _memoize_window_index(model_class):
+    original = model_class.get_window_index
+    cache = {}
+
+    def get_window_index(self, grid_thw):
+        key = (_grid_key(grid_thw), id(self))
+        hit = cache.get(key)
+        if hit is None:
+            hit = _remember(cache, key, original(self, grid_thw))
+        window_index, cu_window_seqlens = hit
+        return window_index, list(cu_window_seqlens)
+
+    get_window_index._starvla_original = original
+    model_class.get_window_index = get_window_index
+
+
+def _install_qwen3(qwen3):
+    _memoize_rot_pos_emb(qwen3.Qwen3VLVisionModel)
+    interp_cache = {}
 
     def interp_indices(self, grid):
         """idx_tensor and weight_tensor of the upstream function, built from host integers (same arithmetic)."""
@@ -116,8 +140,33 @@ def install():
         patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
         return patch_pos_embeds
 
-    rot_pos_emb._starvla_original = original_rot
     fast_pos_embed_interpolate._starvla_original = qwen3.Qwen3VLVisionModel.fast_pos_embed_interpolate
-    qwen3.Qwen3VLVisionModel.rot_pos_emb = rot_pos_emb
     qwen3.Qwen3VLVisionModel.fast_pos_embed_interpolate = fast_pos_embed_interpolate
-    _installed = True
+
+
+def _install_qwen2_5(qwen2_5):
+    _memoize_rot_pos_emb(qwen2_5.Qwen2_5_VisionTransformerPretrainedModel)
+    _memoize_window_index(qwen2_5.Qwen2_5_VisionTransformerPretrainedModel)
+
+
+def _install_qwen2(qwen2):
+    _memoize_rot_pos_emb(qwen2.Qwen2VisionTransformerPretrainedModel)
+
+
+_FAMILIES = {
+    "transformers.models.qwen3_vl.modeling_qwen3_vl": _install_qwen3,
+    "transformers.models.qwen2_5_vl.modeling_qwen2_5_vl": _install_qwen2_5,
+    "transformers.models.qwen2_vl.modeling_qwen2_vl": _install_qwen2,
+}
+
+
+def apply(vlm):
+    """Memoize the position tables if the backbone's vision tower is one of the Qwen families."""
+    visual = getattr(getattr(getattr(vlm, "model", None), "model", None), "visual", None)
+    family = type(visual).__module__
+    if visual is None or family not in _FAMILIES:
+        return False
+    if family not in _installed:
+        _FAMILIES[family](sys.modules[family])
+        _installed.add(family)
+    return True

@@ -249,6 +249,9 @@ class VLAMTrainer(TrainerUtils):
     def _create_data_iterators(self):
         """Create data iterators."""
         self.vla_iter = iter(self.vla_train_dataloader)
+        from starVLA import fast
+
+        fast.accelerate_engine(self.model)  # optimizer-side fast paths; nothing unless STARVLA_FAST selects them
         self.vlm_iter = iter(self.vlm_train_dataloader)
 
     def _get_next_batch(self):

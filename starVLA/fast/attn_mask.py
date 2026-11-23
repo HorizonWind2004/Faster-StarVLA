@@ -10,7 +10,12 @@ Building it with two broadcasted tensor ops gives the same boolean tensor; the v
 host time per call at batch 16 x 205 tokens, while the GPU waits. `install()` registers the direct builder for the
 "sdpa" attention implementation through transformers' own registry (AttentionMaskInterface.register); every case it
 does not cover (extra and/or mask functions, packed sequences, local attention) is delegated to the original.
+
+Applies to every backbone whose transformers model builds its mask with masking_utils.create_causal_mask (the Qwen,
+Gemma, Llama and Phi families in transformers 4.57), whatever the framework on top.
 """
+import sys
+
 import torch
 from transformers import masking_utils
 
@@ -45,3 +50,12 @@ def install():
     sdpa_mask._starvla_original = original
     masking_utils.AttentionMaskInterface.register("sdpa", sdpa_mask)
     _installed = True
+
+
+def apply(vlm):
+    """Register the direct builder if the backbone's transformers model uses masking_utils."""
+    modeling = sys.modules.get(type(getattr(vlm, "model", None)).__module__)
+    if not hasattr(modeling, "create_causal_mask") or "sdpa" not in masking_utils.ALL_MASK_ATTENTION_FUNCTIONS:
+        return False
+    install()
+    return True

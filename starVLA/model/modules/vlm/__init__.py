@@ -1,4 +1,11 @@
 def get_vlm_model(config):
+    """Build the backbone interface for `config.framework.qwenvl.base_vlm`, with the selected fast paths applied."""
+    from starVLA import fast
+
+    return fast.accelerate_backbone(_build_vlm_model(config))
+
+
+def _build_vlm_model(config):
 
     vlm_name = config.framework.qwenvl.base_vlm
 
