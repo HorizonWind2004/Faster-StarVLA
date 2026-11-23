@@ -55,8 +55,19 @@ rounds that did not help.
 
 ![Optimization map: input pipeline, vision tower, language model, DeepSpeed ZeRO-2](docs/faster/figures/module-map.svg)
 
-The switches apply to the QwenOFT framework on a Qwen3-VL backbone; the two DeepSpeed switches apply to any starVLA
-trainer that uses ZeRO-2. The two compile switches change floating-point rounding; the other seven are bit-exact.
+starVLA is a framework of many policies and backbones. All numbers here are from one recipe: QwenOFT on Qwen3-VL-4B,
+trained by `train_starvla.py`. Where each switch acts:
+
+| Switches | Acts on | Measured on |
+|---|---|---|
+| `STARVLA_FAST_ATTN_MASK`, `STARVLA_BATCHED_VISION_ATTN`, `STARVLA_VISION_POS_CACHE`, `STARVLA_COMPILE_LM`, `STARVLA_COMPILE_VISION` | the Qwen3-VL interface, so every framework built on a Qwen3-VL base (QwenOFT, QwenGR00T, QwenPI, QwenFast, …) | QwenOFT |
+| `STARVLA_DS_FUSED_GRAD_NORM`, `STARVLA_DS_PLAIN_ALLREDUCE` | `train_starvla.py` with DeepSpeed ZeRO-2, any framework | QwenOFT |
+| `STARVLA_PREP_IN_WORKERS`, `STARVLA_SKIP_LM_HEAD` | QwenOFT on Qwen3-VL only; no effect elsewhere | QwenOFT |
+
+Not covered: the other backbones (Qwen2.5-VL, Qwen3.5, Cosmos-Reason2, Gemma, MiniCPM-V, PaliGemma, …), the
+world-model and vision-only frameworks, and the co-training and VLM trainers. The two compile switches change
+floating-point rounding; the other seven are bit-exact.
+
 See [why each change helps and what each switch measured](docs/faster/measurement.md#what-changed-in-detail).
 
 ## Validation

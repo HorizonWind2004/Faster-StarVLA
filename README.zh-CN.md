@@ -50,8 +50,19 @@ bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 
 ![优化分布：输入处理、视觉塔、语言模型、DeepSpeed ZeRO-2](docs/faster/figures/module-map.svg)
 
-这些开关针对 QwenOFT 框架 + Qwen3-VL 底座；两个 DeepSpeed 开关对任何用 ZeRO-2 的 starVLA 训练都适用。两个编译开关会
-改变浮点舍入，其余七个逐位一致。[每项改动为什么有效、每个开关实测多少](docs/faster/measurement.md#what-changed-in-detail)。
+starVLA 是一个包含很多策略和底座的框架。这里所有数字都来自一个配方：QwenOFT + Qwen3-VL-4B，用 `train_starvla.py` 训练。
+各开关的作用位置：
+
+| 开关 | 作用位置 | 实测对象 |
+|---|---|---|
+| `STARVLA_FAST_ATTN_MASK`、`STARVLA_BATCHED_VISION_ATTN`、`STARVLA_VISION_POS_CACHE`、`STARVLA_COMPILE_LM`、`STARVLA_COMPILE_VISION` | Qwen3-VL 接口，所以对所有以 Qwen3-VL 为底座的框架生效（QwenOFT、QwenGR00T、QwenPI、QwenFast 等） | QwenOFT |
+| `STARVLA_DS_FUSED_GRAD_NORM`、`STARVLA_DS_PLAIN_ALLREDUCE` | 用 DeepSpeed ZeRO-2 的 `train_starvla.py`，任何框架 | QwenOFT |
+| `STARVLA_PREP_IN_WORKERS`、`STARVLA_SKIP_LM_HEAD` | 只对 QwenOFT + Qwen3-VL 生效，其他情况下不起作用 | QwenOFT |
+
+没有覆盖：其他底座（Qwen2.5-VL、Qwen3.5、Cosmos-Reason2、Gemma、MiniCPM-V、PaliGemma 等）、世界模型和纯视觉框架、
+co-training 与 VLM 训练脚本。两个编译开关会改变浮点舍入，其余七个逐位一致。
+
+[每项改动为什么有效、每个开关实测多少](docs/faster/measurement.md#what-changed-in-detail)。
 
 ## 验证
 
