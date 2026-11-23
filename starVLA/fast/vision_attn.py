@@ -77,10 +77,13 @@ def _bitwise(layout, heads, head_dim, dtype, device):
             q, k, v, weight = random(), random(), random(), random()
             if with_grad:
                 q, k, v = q.requires_grad_(), k.requires_grad_(), v.requires_grad_()
-            batched = F.scaled_dot_product_attention(q, k, v)
-            single = torch.cat(
-                [F.scaled_dot_product_attention(q[i:i + 1], k[i:i + 1], v[i:i + 1]) for i in range(chunks)]
-            )
+            def attention(q, k, v):  # the call transformers' "sdpa" attention makes for these layers
+                return F.scaled_dot_product_attention(
+                    q, k, v, attn_mask=None, dropout_p=0.0, scale=head_dim**-0.5, is_causal=False
+                )
+
+            batched = attention(q, k, v)
+            single = torch.cat([attention(q[i:i + 1], k[i:i + 1], v[i:i + 1]) for i in range(chunks)])
             same = torch.equal(batched, single)
             if same and with_grad:
                 grads = [torch.autograd.grad((out * weight).sum(), (q, k, v)) for out in (batched, single)]
