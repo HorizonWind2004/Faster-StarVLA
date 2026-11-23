@@ -1,0 +1,52 @@
+{
+ "tree": "$WORK/starvla/ws/starVLA",
+ "switches": {
+  "STARVLA_FAST": "exact"
+ },
+ "evaluator_sha256": "868f97722fd37ab3fb2b34a8347147bf4214028f5bf084e73425065a78b68a95",
+ "tree_digest": "40405fadfacf126e1e381057a287d3ee7c89c371dc6149c82445cf7d38106254",
+ "mode": "check",
+ "gates": {
+  "structure": {
+   "status": "PASS",
+   "samples": 96,
+   "batches": 4
+  },
+  "benefit": {
+   "notes": {
+    "window_ratio": 1.001714913695623,
+    "frozen_window_ratio": 1.0120227773308592
+   },
+   "candidate_step_ms": 510.14692021533847,
+   "candidate_windows": [
+    510.58397443033755,
+    509.7098660003394
+   ],
+   "reference_ms": 906.864908257412,
+   "speedup": 1.777654382142726,
+   "threshold": 1.02,
+   "spread": 0.00688839291082238,
+   "peak_mem_gib": 66.211678981781,
+   "gpu_util": 67.4,
+   "status": "PASS"
+  },
+  "bitwise": {
+   "checked": 23336,
+   "bitwise_identical": 23336,
+   "exact_failures": [],
+   "errors": [],
+   "precision_mode_changes": [],
+   "dtype_changes": [],
+   "status": "BITWISE"
+  }
+ },
+ "started": "2026-11-23T17:12:09.455836",
+ "performance": {
+  "speedup": 1.777654382142726,
+  "reference_step_ms": 906.864908257412,
+  "candidate_step_ms": 510.14692021533847
+ },
+ "status": "PASS",
+ "finished": "2026-11-23T17:45:23.749109",
+ "tier": "N0"
+}

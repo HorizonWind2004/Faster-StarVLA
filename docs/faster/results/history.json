@@ -11,7 +11,7 @@
    "label": "+ inputs in workers,\nno LM head, direct mask",
    "step_ms": 677.8276864500367,
    "speedup": 1.3378988884430258,
-   "switches": "STARVLA_PREP_IN_WORKERS, STARVLA_SKIP_LM_HEAD, STARVLA_FAST_ATTN_MASK",
+   "switches": "worker_prep, hidden_only, attn_mask",
    "peak_mem_gib": 66.5906457901001,
    "gpu_util": 54.2
   },
@@ -19,7 +19,7 @@
    "label": "+ batched vision\nattention",
    "step_ms": 588.7641415101825,
    "speedup": 1.5402855648295761,
-   "switches": "STARVLA_BATCHED_VISION_ATTN",
+   "switches": "vision_attn",
    "peak_mem_gib": 66.21493673324585,
    "gpu_util": 74.0
   },
@@ -27,7 +27,7 @@
    "label": "+ vision position\ncache",
    "step_ms": 541.5213262048201,
    "speedup": 1.6746614849188926,
-   "switches": "STARVLA_VISION_POS_CACHE",
+   "switches": "vision_pos",
    "peak_mem_gib": 66.215500831604,
    "gpu_util": 75.5
   },
@@ -35,7 +35,7 @@
    "label": "+ rotary ids in workers,\nfused grad norm",
    "step_ms": 528.6980036500609,
    "speedup": 1.715279615199106,
-   "switches": "STARVLA_PREP_IN_WORKERS (position ids), STARVLA_DS_FUSED_GRAD_NORM",
+   "switches": "worker_prep, grad_norm",
    "peak_mem_gib": 66.215500831604,
    "gpu_util": 78.7
   },
@@ -43,7 +43,7 @@
    "label": "+ compiled decoder\nlayers",
    "step_ms": 493.03387796506286,
    "speedup": 1.8393561756859107,
-   "switches": "STARVLA_COMPILE_LM",
+   "switches": "compile_lm",
    "peak_mem_gib": 59.853230476379395,
    "gpu_util": 53.4
   },
@@ -51,7 +51,7 @@
    "label": "+ in-place\nall-reduce",
    "step_ms": 472.3955271349405,
    "speedup": 1.919715272829763,
-   "switches": "STARVLA_DS_PLAIN_ALLREDUCE",
+   "switches": "allreduce",
    "peak_mem_gib": 59.853229999542236,
    "gpu_util": 46.3
   },
@@ -59,7 +59,7 @@
    "label": "+ compiled vision blocks,\ngc.freeze",
    "step_ms": 437.25324762490345,
    "speedup": 2.074003825433822,
-   "switches": "STARVLA_COMPILE_VISION",
+   "switches": "compile_vision",
    "peak_mem_gib": 59.012226581573486,
    "gpu_util": 54.3
   }

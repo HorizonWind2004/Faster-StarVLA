@@ -9,26 +9,38 @@
 | Implementation | Time / training step (ms) ↓ | Speedup ↑ |
 |---|---:|---:|
 | Baseline | 905.4 | 1.00× |
-| Faster-StarVLA, bit-exact switches only | 521.9 | 1.74× |
-| **Faster-StarVLA** | **453.3** | **2.00×** |
+| Faster-StarVLA, `STARVLA_FAST=exact` (bit-exact) | 521.9 | 1.74× |
+| **Faster-StarVLA, `STARVLA_FAST=all`** | **453.3** | **2.00×** |
 
 Measured on **2 × NVIDIA B300** with starVLA's [LIBERO recipe](examples/simBenchmarks/LIBERO/README.md): QwenOFT on
-Qwen3-VL-4B, per-GPU batch 16, all 4.50 B parameters trainable. With the bit-exact switches, the training steps in
-deterministic mode are **bitwise identical** to the baseline. [Setup and measurement details](docs/faster/measurement.md).
+Qwen3-VL-4B, per-GPU batch 16, all 4.50 B parameters trainable. At the `exact` level, the training steps in
+deterministic mode are **bitwise identical** to the baseline. [Setup and measurement details](docs/faster/measurement.md);
+[other frameworks and backbones](#other-frameworks-and-backbones).
+
+These figures are from the session in which the baseline timing was frozen. In two later sessions the baseline itself ran faster (796 and 816 ms instead of 905 ms), and the same comparison gave 1.87× and 1.94× for `all` and 1.56× and 1.63× for `exact` ([sessions](docs/faster/measurement.md#the-judge-on-the-unified-code)).
 
 ## Quick Start
 
-Prepare the environment, weights and data as in the [upstream instructions](README.upstream.md), then source the
-switches and launch upstream's script:
+Prepare the environment, weights and data as in the [upstream instructions](README.upstream.md). One environment
+variable selects the fast paths, for every framework and backbone:
 
 ```bash
-source scripts/configs/faster.env            # all switches: 2.00x
-# source scripts/configs/faster_bitwise.env  # bit-exact switches only: 1.74x
+export STARVLA_FAST=all      # every fast path: 2.00x
+# export STARVLA_FAST=exact  # only the fast paths that are bitwise identical to the baseline: 1.74x
 
 bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 ```
 
-With the switches unset, the code runs the baseline code paths.
+Unset (or `off`), the code runs the baseline code paths. Each fast path checks the model it is given and is skipped
+where it does not apply; the log says which ones are on:
+
+```
+[starVLA.fast] _QWen3_VL_Interface: attn_mask, hidden_only, vision_attn, vision_pos, vision_attn_relaxed, compile_lm, compile_vision
+[starVLA.fast] DeepSpeedEngine: grad_norm, allreduce
+```
+
+Single paths can be added or removed by name (`STARVLA_FAST=exact,-worker_prep,compile_lm`). The same variable
+works for inference: set it for the policy server.
 
 ## Agent Optimization History
 
@@ -40,47 +52,73 @@ rounds that did not help.
 
 ## What changed
 
-- **Input pipeline (`STARVLA_PREP_IN_WORKERS`):** the prompt construction, the Qwen3-VL processor and the rotary
+- **Input pipeline (`worker_prep`):** the prompt construction, the Qwen3-VL processor and the rotary
   position ids (0.2 s of single-threaded CPU per step, with the GPU waiting) run in the data-loader workers instead of
   the training process.
-- **Vision tower (`STARVLA_BATCHED_VISION_ATTN`, `STARVLA_VISION_POS_CACHE`, `STARVLA_COMPILE_VISION`):** one batched
-  attention call per layer instead of one call per image with a host synchronization in every layer; the position
+- **Vision tower (`vision_attn`, `vision_pos`, `compile_vision`):** one batched attention call per layer instead of one call per image with a host synchronization in every layer; the position
   tables are built once; the 24 blocks are compiled with Inductor.
-- **Language model (`STARVLA_SKIP_LM_HEAD`, `STARVLA_FAST_ATTN_MASK`, `STARVLA_COMPILE_LM`):** the unused vocabulary
-  logits are not computed; the attention mask comes from two broadcasted tensor ops instead of four nested
+- **Language model (`hidden_only`, `attn_mask`, `compile_lm`):** the unused vocabulary logits are not computed; the attention mask comes from two broadcasted tensor ops instead of four nested
   `torch.vmap` calls; the 36 decoder layers are compiled with Inductor for training calls, with `gc.freeze()` against
   the garbage-collector pauses that compilation causes.
-- **DeepSpeed ZeRO-2 (`STARVLA_DS_FUSED_GRAD_NORM`, `STARVLA_DS_PLAIN_ALLREDUCE`):** the clipping norm no longer casts
+- **DeepSpeed ZeRO-2 (`grad_norm`, `allreduce`):** the clipping norm no longer casts
   every gradient to fp64 (18 GB written and read per step); gradient buckets are all-reduced in place.
 
 ![Optimization map: input pipeline, vision tower, language model, DeepSpeed ZeRO-2](docs/faster/figures/module-map.svg)
 
-starVLA is a framework of many policies and backbones. All numbers here are from one recipe: QwenOFT on Qwen3-VL-4B,
-trained by `train_starvla.py`. Where each switch acts:
+All of it lives in one package, [`starVLA/fast/`](starVLA/fast/__init__.py), called from three places that belong to no
+framework: where a backbone is built (`get_vlm_model`), where the trainer gets its DeepSpeed engine, and where the
+data loader is built. The backbone interfaces contain no switch, and a framework's only contact is one line that
+accepts the inputs the data-loader workers prepared.
 
-| Switches | Acts on | Measured on |
+See [why each change helps and what each one measured](docs/faster/measurement.md#what-changed-in-detail).
+
+## Other frameworks and backbones
+
+starVLA is a framework of many policies and backbones. The headline numbers are from one recipe (QwenOFT on
+Qwen3-VL-4B). The same setting on other combinations, same hardware, data and batch size:
+
+| Framework | Backbone | Attention | Baseline (ms/step) | `exact` | `all` | `exact` checked bit for bit |
+|---|---|---|---:|---:|---:|---|
+| QwenOFT | Qwen3-VL-4B | SDPA | 795.5 | 510.1 (1.56×) | 425.3 (1.87×) | judge: 23,336 tensors; 728 gradients + actions ✓ |
+| QwenGR00T | Qwen3-VL-4B | SDPA | 903.0 | 783.9 (1.15×) | 722.9 (1.25×) | 960 gradients + actions ✓ |
+| QwenPI | Qwen3-VL-4B | SDPA | 1291.9 | 1177.4 (1.10×) | 1133.3 (1.14×) | 1,225 gradients + actions ✓ |
+| QwenOFT | Qwen2.5-VL-3B | SDPA | 1021.7 | 694.1 (1.47×) | 554.4 (1.84×) | 840 gradients + actions ✓ |
+| QwenOFT | Qwen2.5-VL-3B | flash-attention | 775.0 | 738.7 (1.05×) | same as `exact` | 840 gradients + actions ✓ |
+| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 857.0 | 830.0 (1.03×) | same as `exact` | 1,072 gradients + actions ✓ |
+
+| Fast path | Level | Applies to |
 |---|---|---|
-| `STARVLA_FAST_ATTN_MASK`, `STARVLA_BATCHED_VISION_ATTN`, `STARVLA_VISION_POS_CACHE`, `STARVLA_COMPILE_LM`, `STARVLA_COMPILE_VISION` | the Qwen3-VL interface, so every framework built on a Qwen3-VL base (QwenOFT, QwenGR00T, QwenPI, QwenFast, …) | QwenOFT |
-| `STARVLA_DS_FUSED_GRAD_NORM`, `STARVLA_DS_PLAIN_ALLREDUCE` | `train_starvla.py` with DeepSpeed ZeRO-2, any framework | QwenOFT |
-| `STARVLA_PREP_IN_WORKERS`, `STARVLA_SKIP_LM_HEAD` | QwenOFT on Qwen3-VL only; no effect elsewhere | QwenOFT |
+| `attn_mask` | exact | any backbone whose transformers model builds its mask with `masking_utils` (Qwen, Gemma, Llama, Phi families), with SDPA attention |
+| `hidden_only` | exact | any backbone with an LM head, in calls that ask for hidden states without labels (QwenOFT, QwenGR00T, QwenPI, …) |
+| `vision_attn` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers with SDPA attention, for the image shapes where a probe on the running GPU shows the batched call is bitwise identical |
+| `vision_pos` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers |
+| `worker_prep` | exact | QwenOFT on Qwen3-VL (a framework opts in by registering a builder) |
+| `grad_norm`, `allreduce` | exact | any framework trained with DeepSpeed ZeRO-2 |
+| `vision_attn_relaxed` | all | the batched vision attention for every uniform image shape (last-bit differences) |
+| `compile_lm`, `compile_vision` | all | backbones with `model.language_model.layers` / `model.visual.blocks` (the Qwen-VL families), with SDPA attention |
 
-Not covered: the other backbones (Qwen2.5-VL, Qwen3.5, Cosmos-Reason2, Gemma, MiniCPM-V, PaliGemma, …), the
-world-model and vision-only frameworks, and the co-training and VLM trainers. The two compile switches change
-floating-point rounding; the other seven are bit-exact.
+This table is from a later session on a second node, in which the baseline of the headline recipe ran at 796 ms instead of 905 ms and `STARVLA_FAST=all` at 425 ms instead of 453 ms ([sessions](docs/faster/measurement.md#the-judge-on-the-unified-code)). Every row is compared with a baseline from the same job.
 
-See [why each change helps and what each switch measured](docs/faster/measurement.md#what-changed-in-detail).
+The gain is largest on QwenOFT + Qwen3-VL because `worker_prep` has a builder only for that pair; elsewhere the processor still runs in the training process. No fast path touches the action heads of QwenGR00T and QwenPI.
+
+The Qwen2.5-VL recipes load the backbone with flash-attention, where the SDPA-specific paths and the compiled layers do not apply and are skipped, so `all` selects the same paths as `exact` there. Loading the same backbone with SDPA (`framework.qwenvl.attn_implementation=sdpa`) and `STARVLA_FAST=all` is the fastest configuration measured for it: 554 ms against 775 ms for the flash-attention baseline (1.40×).
+
+On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the four full-attention vision layers (32 images × 256 patches, head dimension 80), so `exact` batches only the 28 window-attention layers; `all` batches both.
+
+Not measured: backbones outside the Qwen-VL families (Cosmos-Reason2, MiniCPM-V, PaliGemma, …), the world-model
+and vision-only frameworks, and the co-training and VLM trainers (they call the same hooks).
 
 ## Validation
 
 Everything was judged by a frozen evaluator built before optimization started
 ([docs/faster/judge/](docs/faster/judge/), [how it decides](docs/faster/measurement.md#the-judge)).
 
-**Bit-exact switches.** With the seven non-compile switches set, two 2-step training cases in deterministic mode
+**`STARVLA_FAST=exact`.** With the seven exact fast paths on, two 2-step training cases in deterministic mode
 (one with the recipe's periodic evaluation between the steps), on both ranks: 23,336 recorded tensors (the
 loss, and the fp32 gradient, update and both Adam states of all 729 parameters) are bitwise identical to upstream,
 as are the learning rates, the random-number state and a digest of what was fed to the VLM.
 
-**All switches.** The compiled layers change floating-point rounding, so the full switch set is compared
+**`STARVLA_FAST=all`.** The compiled layers change floating-point rounding, so the full set is compared
 statistically: one 60-step training run in deterministic mode against upstream on the same seed; each endpoint must
 stay within 3σ of upstream's own seed-to-seed spread (6 seeds, frozen before optimization).
 
@@ -97,13 +135,15 @@ stay within 3σ of upstream's own seed-to-seed spread (6 seeds, frozen before op
 A control run with every learning rate multiplied by 1.02 is rejected by this check (+16σ on the update-size
 endpoints), as are a run whose VLM receives no gradient and a run with a different clipping threshold.
 
-**LIBERO evaluation.** A full training run with all switches (30,000 steps, seed 42, 2 x B300, global batch 32) was evaluated with starVLA's LIBERO protocol, 500 episodes per suite, next to the released checkpoint in the same pipeline. The released checkpoint was trained by the starVLA authors on 8 GPUs (global batch 128, checkpoint at step 50,000); this is a check that the accelerated code trains a working policy, not a matched-seed comparison. The 30,000 steps took 3 h 51 min of wall time including the recipe's periodic evaluations and three checkpoint saves (462 ms per step overall); at the frozen upstream step time the steps alone would take 7.6 h (not run).
+**After the refactor.** The checks above were made before the fast paths were moved behind `STARVLA_FAST`. On the refactored code the judge finds `STARVLA_FAST=exact` bitwise identical again (23,336 of 23,336 tensors, in both later sessions). The three-process check of `STARVLA_FAST=all` did not give a verdict in either session: the baseline ran more than the allowed band faster than the frozen timing, and the judge then refuses to conclude (INVALID). Its own measurements were 1.87× and 1.94×. [Details](docs/faster/measurement.md#the-judge-on-the-unified-code).
+
+**LIBERO evaluation.** A full training run with all fast paths (30,000 steps, seed 42, 2 x B300, global batch 32) was evaluated with starVLA's LIBERO protocol, 500 episodes per suite, next to the released checkpoint in the same pipeline. The released checkpoint was trained by the starVLA authors on 8 GPUs (global batch 128, checkpoint at step 50,000); this is a check that the accelerated code trains a working policy, not a matched-seed comparison. The 30,000 steps took 3 h 51 min of wall time including the recipe's periodic evaluations and three checkpoint saves (462 ms per step overall); at the frozen upstream step time the steps alone would take 7.6 h (not run).
 
 | Success rate (%) | Spatial | Object | Goal | Long | Avg |
 |---|---:|---:|---:|---:|---:|
 | starVLA Qwen3-VL-OFT, published | 97.8 | 98.6 | 96.2 | 93.8 | 96.6 |
 | Released checkpoint (`StarVLA/Qwen3-VL-OFT-LIBERO-4in1`, step 50,000), our evaluation | 98.6 | 100.0 | 99.4 | 96.6 | 98.65 |
-| **Faster-StarVLA run** (all switches, 30,000 steps on 2 GPUs) | 98.8 | 98.6 | 98.4 | 93.4 | 97.30 |
+| **Faster-StarVLA run** (all fast paths, 30,000 steps on 2 GPUs) | 98.8 | 98.6 | 98.4 | 93.4 | 97.30 |
 
 ## Faster evaluation
 

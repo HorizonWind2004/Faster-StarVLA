@@ -120,3 +120,47 @@ The data stage is not a bottleneck (4 workers, 58 ms per sample on the CPU, `dat
 - With the compiled layers it does not run: Dynamo cannot trace `flash_attn._flash_attn_varlen_forward`
   (`Expected a value of type 'int' for argument 'max_seqlen_q' but instead found type 'FakeTensor'`).
 - Dropped; the switch is not in the tree. Run files: runs/fa2, runs/fa2_compile.
+
+## Round 11: one setting for every recipe, and what it does elsewhere
+
+- The nine per-path variables became one package, `starVLA/fast/`, behind `STARVLA_FAST=off|exact|all|name,-name`.
+  Each fast path is a module with `apply(target) -> bool` that inspects the model it is given; the callers are
+  `get_vlm_model`, the three trainers and `build_dataloader`. The backbone interfaces carry no switch any more. The
+  old variables still select the same paths. CPU tests on tiny random-weight Qwen3-VL and Qwen2.5-VL models
+  (`tests/test_fast_paths.py`): selection syntax, 62 / 68 gradients, hidden states and logits bitwise identical.
+- Real weights, bf16, B300, baseline against `exact` (runs/unified/bitwise4): 10 checks, all identical. Backbone only
+  on Qwen3-VL-4B (712 gradients) and Qwen2.5-VL-3B (824); one training step and one `predict_action` call of QwenOFT,
+  QwenGR00T and QwenPI on Qwen3-VL (728 / 960 / 1,225 gradients), QwenOFT and QwenGR00T on Qwen2.5-VL with SDPA
+  (840 / 1,072) and with flash-attention (840 / 1,072).
+- Found on the way: one batched attention call on [32, 16, 256, d] is bitwise identical to 32 single calls at head
+  dimension 64 but not at 72 or 80 in bf16 on B300 (64-token windows and fp32 are identical at all three). The first
+  version of `vision_attn` would have changed Qwen2.5-VL's gradients in the last bit. It now probes each shape, dtype
+  and device once, forward and backward, and batches only what agrees; `vision_attn_relaxed` (level `all`) batches the
+  rest.
+- Found on the way: upstream's QwenGR00T and QwenPI gradients differ run to run (PyTorch's fused SDPA backward in the
+  action heads). Their checks were made with the flash and memory-efficient SDPA kernels disabled on both sides.
+- Found on the way: `STARVLA_FAST=all` on a backbone loaded with flash-attention (the default of the Qwen2.5-VL
+  recipes) failed in the first training step, in the compiled vision blocks (the round 10 Dynamo error). `attn_mask`,
+  `vision_attn(_relaxed)` and both compiled paths now return "not applicable" there. Both flash-attention recipes then
+  ran with `all` (747.2 / 849.3 ms, session 3).
+- Step time on other combinations, one run per cell, each against a baseline from the same job (session 2):
+  QwenGR00T + Qwen3-VL 903.0 -> 783.9 (`exact`, 1.15x) -> 722.9 (`all`, 1.25x); QwenPI + Qwen3-VL 1291.9 -> 1177.4
+  (1.10x) -> 1133.3 (1.14x); QwenOFT + Qwen2.5-VL with SDPA 1021.7 -> 694.1 (1.47x) -> 554.4 (1.84x); with
+  flash-attention 775.0 -> 738.7 (1.05x); QwenGR00T + Qwen2.5-VL with flash-attention 857.0 -> 830.0 (1.03x).
+  `worker_prep` has a builder only for QwenOFT + Qwen3-VL, and no path touches the action heads.
+- The judge on the refactored code. `exact`: 23,336 of 23,336 tensors bitwise identical, PASS N0, in both sessions.
+  `all`, three-process check: INVALID in both sessions, because the baseline itself ran outside the frozen band:
+
+  | Session | Node | Baseline | `exact` | `all` |
+  |---|---|---:|---:|---:|
+  | 1 (rounds 0-9; the timing was frozen here) | A | 905.4 | 521.9 (1.74x) | 453.3 (2.00x) |
+  | 2 | B | 795.5 | 510.1 (1.56x) | 425.3 (1.87x) |
+  | 3 | A, after a reboot | 815.9 | 501.9 (1.63x) | 421.5 (1.94x) |
+
+  Same reference code, environment, allocation (2 GPUs, 32 cores) and command line; the whole step-time distribution
+  of the baseline moved (median 896 -> 777-819 ms). Why node A was slower in session 1 was not determined. The agent-
+  style speedups the judge printed in sessions 2 and 3 (1.78x, 1.81x for `exact`) divide by the frozen timing of
+  session 1 and overstate; the table uses each session's own baseline. The judge and its frozen timing were not
+  changed.
+- LIBERO through the unified code (released checkpoint, policy servers with `STARVLA_FAST=exact`, 2,000 episodes):
+  97.85% (98.0 / 99.8 / 99.0 / 94.6); the first release's inference variables gave 98.25% in the same harness.
