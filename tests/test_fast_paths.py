@@ -223,7 +223,8 @@ def _check_worker_prep(model_dir):
                "QwenOFT": lambda batch: [instruction + suffix for instruction in with_state(batch)]}
     for framework, prompt in prompts.items():
         cfg.framework.name = framework
-        loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=fast.worker_collate(cfg, _same_batch))
+        loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=fast.worker_collate(cfg, _same_batch),
+                            multiprocessing_context="spawn" if framework == "QwenOFT" else None)  # must pickle
         used = worker_prep.stats["used"]
         for batch in loader:
             images, instructions = [e["image"] for e in batch], prompt(batch)
