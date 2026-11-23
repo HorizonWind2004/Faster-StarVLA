@@ -1,0 +1,20 @@
+{
+ "libero_spatial": {
+  "episodes": 500,
+  "success": 98.8
+ },
+ "libero_object": {
+  "episodes": 500,
+  "success": 98.6
+ },
+ "libero_goal": {
+  "episodes": 500,
+  "success": 98.4
+ },
+ "libero_10": {
+  "episodes": 500,
+  "success": 93.4
+ },
+ "avg": 97.3,
+ "episodes": 2000
+}

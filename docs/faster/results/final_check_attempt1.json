@@ -1,0 +1,72 @@
+{
+ "tree": "$WORK/starvla/ws/starVLA",
+ "switches": {
+  "STARVLA_PREP_IN_WORKERS": "1",
+  "STARVLA_SKIP_LM_HEAD": "1",
+  "STARVLA_FAST_ATTN_MASK": "1",
+  "STARVLA_BATCHED_VISION_ATTN": "1",
+  "STARVLA_VISION_POS_CACHE": "1",
+  "STARVLA_DS_FUSED_GRAD_NORM": "1",
+  "STARVLA_COMPILE_LM": "1",
+  "STARVLA_DS_PLAIN_ALLREDUCE": "1",
+  "STARVLA_COMPILE_VISION": "1"
+ },
+ "evaluator_sha256": "9a297649b4f4fc66b6ea7900d1a83c63ba064079391f3ec816f5fd9c56bb17ce",
+ "tree_digest": "39da325c2e093c9daca537c062ccc49677297faf38ad733ee9006d73380e8c49",
+ "mode": "final",
+ "gates": {
+  "structure": {
+   "status": "PASS",
+   "samples": 96,
+   "batches": 4
+  },
+  "benefit": {
+   "reference_step_ms": [
+    901.0293220897438,
+    910.6098646251485
+   ],
+   "invalid": [],
+   "candidate_step_ms": 452.68897044996265,
+   "candidate_windows": [
+    454.7808344400255,
+    450.5971064598998
+   ],
+   "reference_ms": 905.8195933574461,
+   "speedup": 2.0009756200975737,
+   "threshold": 1.0211533126588577,
+   "spread": 0.010576656329428823,
+   "peak_mem_gib": 59.012226581573486,
+   "gpu_util": 50.5,
+   "status": "PASS"
+  },
+  "bitwise": {
+   "checked": 23336,
+   "bitwise_identical": 3227,
+   "exact_failures": [],
+   "errors": [],
+   "precision_mode_changes": [],
+   "dtype_changes": [],
+   "status": "NOT_BITWISE"
+  },
+  "statistical": {
+   "status": "ERROR",
+   "records": [
+    {
+     "ok": false,
+     "returncode": 1,
+     "seconds": 222.45108199119568,
+     "log": "$WORK/starvla/ws/runs/final/traj/traj_s0.log",
+     "tree_digest": "39da325c2e093c9daca537c062ccc49677297faf38ad733ee9006d73380e8c49"
+    }
+   ]
+  }
+ },
+ "started": "2026-11-22T19:30:42.675865",
+ "performance": {
+  "speedup": 2.0009756200975737,
+  "reference_step_ms": 905.8195933574461,
+  "candidate_step_ms": 452.68897044996265
+ },
+ "status": "ERROR",
+ "finished": "2026-11-22T20:21:55.943293"
+}

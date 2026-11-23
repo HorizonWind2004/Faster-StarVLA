@@ -1,0 +1,58 @@
+{
+ "tree": "$WORK/starvla/ws/starVLA",
+ "switches": {
+  "STARVLA_PREP_IN_WORKERS": "1",
+  "STARVLA_SKIP_LM_HEAD": "1",
+  "STARVLA_FAST_ATTN_MASK": "1",
+  "STARVLA_BATCHED_VISION_ATTN": "1",
+  "STARVLA_VISION_POS_CACHE": "1",
+  "STARVLA_DS_FUSED_GRAD_NORM": "1",
+  "STARVLA_DS_PLAIN_ALLREDUCE": "1"
+ },
+ "evaluator_sha256": "868f97722fd37ab3fb2b34a8347147bf4214028f5bf084e73425065a78b68a95",
+ "tree_digest": "39da325c2e093c9daca537c062ccc49677297faf38ad733ee9006d73380e8c49",
+ "mode": "check",
+ "gates": {
+  "structure": {
+   "status": "PASS",
+   "samples": 96,
+   "batches": 4
+  },
+  "benefit": {
+   "notes": {
+    "window_ratio": 1.0041274037788996,
+    "frozen_window_ratio": 1.0120227773308592
+   },
+   "candidate_step_ms": 521.9066950798151,
+   "candidate_windows": [
+    522.9815367597621,
+    520.8318533998681
+   ],
+   "reference_ms": 906.864908257412,
+   "speedup": 1.7375996836344958,
+   "threshold": 1.02,
+   "spread": 0.00688839291082238,
+   "peak_mem_gib": 66.21550035476685,
+   "gpu_util": 70.6,
+   "status": "PASS"
+  },
+  "bitwise": {
+   "checked": 23336,
+   "bitwise_identical": 23336,
+   "exact_failures": [],
+   "errors": [],
+   "precision_mode_changes": [],
+   "dtype_changes": [],
+   "status": "BITWISE"
+  }
+ },
+ "started": "2026-11-23T02:04:26.172629",
+ "performance": {
+  "speedup": 1.7375996836344958,
+  "reference_step_ms": 906.864908257412,
+  "candidate_step_ms": 521.9066950798151
+ },
+ "status": "PASS",
+ "finished": "2026-11-23T02:37:16.079017",
+ "tier": "N0"
+}
