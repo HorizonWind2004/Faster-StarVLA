@@ -7,9 +7,10 @@
 
 A fast path belongs to no framework and no backbone. Each one checks the model it is given and is skipped where it
 does not apply, so the same setting works for every recipe; `accelerate_backbone` prints what it turned on. The
-callers are three hooks, none of them in a framework:
+callers are four hooks, none of them in a framework:
 
     get_vlm_model()            -> fast.accelerate_backbone(vlm)       every backbone interface
+    build_framework()          -> fast.accelerate_framework(model)    the framework as a whole (action head, precision)
     the trainer                -> fast.accelerate_engine(engine)      the DeepSpeed engine
     build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers (for worker_prep)
 
@@ -22,7 +23,7 @@ from typing import NamedTuple
 
 class FastPath(NamedTuple):
     exact: bool  # bitwise identical results
-    hook: str  # "backbone" | "engine"
+    hook: str  # "backbone" | "framework" | "engine"
     apply: str  # "module:function" under starVLA.fast
     summary: str
     legacy: tuple = ()  # the per-path environment variables of the first release, still honoured
@@ -62,15 +63,18 @@ FAST_PATHS = {  # applied in this order
     "compile_vision": FastPath(False, "backbone", "compile:apply_vision",
                                "vision blocks compiled with Inductor for training calls",
                                ("STARVLA_COMPILE_VISION",)),
-    "condition_once": FastPath(False, "backbone", "condition_once:apply",
+    "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),
+    "unused_views": FastPath(False, "framework", "openpi:unused_views",
+                             "PI0 / PI05: a camera view that no sample of the batch has is left out instead of "
+                             "being encoded as a black image and masked"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
                                 ("STARVLA_DS_REDUCE_TO_OWNER",)),
     # a precision setting rather than a reordering; selectable by name only
-    "tf32": FastPath(False, "backbone", "precision:apply_tf32",
+    "tf32": FastPath(False, "framework", "precision:apply_tf32",
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
 BY_NAME_ONLY = frozenset({"reduce_to_owner", "tf32"})
@@ -140,6 +144,12 @@ def accelerate_backbone(vlm):
     """Backbone fast paths for a VLM interface (anything whose `.model` is the Hugging Face model). Returns `vlm`."""
     _run("backbone", vlm)
     return vlm
+
+
+def accelerate_framework(framework):
+    """Fast paths for a built framework (anything `build_framework` returns). Returns `framework`."""
+    _run("framework", framework)
+    return framework
 
 
 def accelerate_engine(engine):

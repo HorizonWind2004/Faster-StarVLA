@@ -42,12 +42,14 @@ def _all_copies(module, args, output):
         return output.repeat(_copies[1], *([1] * (output.dim() - 1)))
 
 
-def apply(target):
-    """Patch the action DiT (class-wide; `target` is not used). False when this build has no such head."""
+def apply(framework):
+    """Patch the action DiT (for every instance). False for a framework without one."""
     global _copies
     try:
         from starVLA.model.modules.action_model.flow_matching_head.cross_attention_dit import DiT
     except ImportError:
+        return False
+    if not any(isinstance(module, DiT) for module in framework.modules()):
         return False
     if getattr(DiT.forward, "_starvla_condition_once", False):
         return True

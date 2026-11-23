@@ -116,7 +116,9 @@ def build_framework(cfg): # The single entry point for building different model 
     )
 
     model_class = FRAMEWORK_REGISTRY[framework_id]
-    return model_class(cfg)
+    from starVLA import fast
+
+    return fast.accelerate_framework(model_class(cfg))  # nothing unless STARVLA_FAST selects a fast path
 
 
 # PreTrainedModel, AutoModel, PretrainedConfig,  are so good, find sometime to study them

@@ -152,7 +152,7 @@ def _check_flash_attention():
     os.environ["STARVLA_FAST"] = "all"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
-                       "compile_lm", "compile_vision", "condition_once"], applied
+                       "compile_lm", "compile_vision"], applied
     assert skipped == ["worker_prep"] and _implementations(model) == {"sdpa"}
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
@@ -271,13 +271,13 @@ def _check_condition_once():
                    timestep=torch.randint(0, 1000, (3 * repeats,)), encoder_attention_mask=mask,
                    return_pre_output=True).pow(2).mean()
         loss.backward()
-        return loss.item(), torch.cat([p.grad.flatten() for p in dit.parameters() if p.grad is not None]), projected
+        return loss.item(), torch.cat([p.grad.flatten() for p in dit.parameters() if p.grad is not None]), projected, dit
 
     cases = [(layerwise, repeats) for layerwise in (False, True) for repeats in (4, 1)]
     before = [step(*case) for case in cases]
-    assert condition_once.apply(None)
-    for (layerwise, repeats), (loss, grads, projected) in zip(cases, before):
-        fast_loss, fast_grads, fast_projected = step(layerwise, repeats)
+    assert condition_once.apply(step(False, 1)[3]) and not condition_once.apply(torch.nn.Linear(2, 2))
+    for (layerwise, repeats), (loss, grads, projected, _) in zip(cases, before):
+        fast_loss, fast_grads, fast_projected, _ = step(layerwise, repeats)
         assert abs(fast_loss - loss) <= 1e-12 * abs(loss) and (fast_grads - grads).norm() <= 1e-10 * grads.norm()
         assert projected == [3 * repeats] * 2 and fast_projected == [3] * 2, (projected, fast_projected)
     print("ok condition_once: key / value projections on 3 rows instead of 12, loss and gradients equal to rounding")
@@ -314,7 +314,7 @@ def test_selection():
                          "DS_FUSED_GRAD_NORM", "COMPILE_LM", "DS_PLAIN_ALLREDUCE", "COMPILE_VISION")
         for name in first_release:
             os.environ["STARVLA_" + name] = "1"
-        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa", "condition_once"}
+        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa", "condition_once", "unused_views"}
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
         assert fast.selection() == fast.LEVELS["exact"]

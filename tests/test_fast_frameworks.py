@@ -4,6 +4,8 @@ at the same loss and gradients as without workers. The backbone is a small rando
 tokenizer and config of a model directory, so the prompts and the image pipeline are the real ones.
 
     STARVLA_TEST_VLMS=<dir of Qwen3-VL-4B-Instruct>[,<dir of Qwen2.5-VL-3B-Instruct>] python tests/test_fast_frameworks.py
+
+With STARVLA_TEST_PALIGEMMA_TOKENIZER=<paligemma_tokenizer.model>, also the unused_views path of PI0 and PI05.
 """
 import dataclasses
 import hashlib
@@ -145,6 +147,61 @@ def _check(model_dir):
             del model, loader
 
 
+def _check_unused_views(tokenizer_model):
+    """PI0 and PI05 (small Gemma towers, fp64) on samples with two of the three camera views: with unused_views the
+    prefix is 256 tokens shorter, and the loss, the gradients and the predicted actions are the same to rounding."""
+    import numpy as np
+    import torch
+    from omegaconf import OmegaConf
+    from PIL import Image
+
+    from starVLA.model.framework.base_framework import build_framework
+
+    rng = np.random.default_rng(0)
+    samples = [{"image": [Image.fromarray(rng.integers(0, 255, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
+                "lang": "pick up the bowl" + " and put it on the plate" * index,
+                "action": rng.uniform(-1, 1, (8, 7)).astype(np.float32),
+                "state": rng.uniform(-1, 1, (1, 8)).astype(np.float32)} for index in range(2)]
+    small = {"width": 128, "depth": 3, "mlp_dim": 256, "num_heads": 2, "num_kv_heads": 1, "head_dim": 64}
+    for framework in ("PI0", "PI05"):
+        cfg = OmegaConf.load(f"examples/simBenchmarks/LIBERO/train_files/openpi/{framework.lower()}_libero_8gpu.yaml")
+        cfg.framework.update(precision="float32", paligemma_config=small,
+                             action_expert_config=dict(small, width=64, mlp_dim=128))
+        cfg.framework.tokenizer.model_path = tokenizer_model
+
+        def run(setting):
+            os.environ["STARVLA_FAST"] = setting
+            torch.manual_seed(0)
+            model = build_framework(cfg).double().train()
+            prefix_tokens, joint_layers = [], model.forward_with_action_expert
+            model.forward_with_action_expert = lambda **kw: (prefix_tokens.append(kw["prefix_embs"].shape[1]), joint_layers(**kw))[1]
+            torch.manual_seed(1)
+            loss = model(samples)["action_loss"]
+            loss.backward()
+            grads = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
+            torch.manual_seed(2)
+            actions = model.eval().predict_action([{k: v for k, v in s.items() if k != "action"} for s in samples])
+            return float(loss), grads, prefix_tokens[0], torch.as_tensor(actions["normalized_actions"])
+
+        loss, grads, tokens, actions = run("off")
+        fast_loss, fast_grads, fast_tokens, fast_actions = run("unused_views")
+        assert fast_tokens == tokens - 256, (tokens, fast_tokens)
+        assert abs(fast_loss - loss) <= 1e-6 * abs(loss) and (fast_grads - grads).norm() <= 1e-6 * grads.norm()
+        assert (fast_actions - actions).abs().max() <= 1e-5
+        print(f"ok {framework} unused_views: prefix {tokens} -> {fast_tokens} tokens, loss, gradients and actions equal "
+              f"to rounding", flush=True)
+
+
+def test_openpi_unused_views():
+    tokenizer_model = os.environ.get("STARVLA_TEST_PALIGEMMA_TOKENIZER", "")
+    if not tokenizer_model:
+        print("skipped unused_views: STARVLA_TEST_PALIGEMMA_TOKENIZER is not set")
+        return
+    result = subprocess.run([sys.executable, __file__, "--unused-views", tokenizer_model], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
+    print("\n".join(line for line in result.stdout.splitlines() if line.startswith("ok ")))
+
+
 def test_frameworks_train_on_worker_inputs():
     model_dirs = [d for d in os.environ.get("STARVLA_TEST_VLMS", "").split(",") if d]
     if not model_dirs:
@@ -157,7 +214,10 @@ def test_frameworks_train_on_worker_inputs():
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if len(sys.argv) > 1:
+    if sys.argv[1:2] == ["--unused-views"]:
+        _check_unused_views(sys.argv[2])
+    elif len(sys.argv) > 1:
         _check(sys.argv[1])
     else:
         test_frameworks_train_on_worker_inputs()
+        test_openpi_unused_views()
