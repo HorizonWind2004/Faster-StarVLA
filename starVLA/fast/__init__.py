@@ -62,6 +62,9 @@ FAST_PATHS = {  # applied in this order
     "compile_vision": FastPath(False, "backbone", "compile:apply_vision",
                                "vision blocks compiled with Inductor for training calls",
                                ("STARVLA_COMPILE_VISION",)),
+    "condition_once": FastPath(False, "backbone", "condition_once:apply",
+                               "the action DiT projects its conditioning once per sample, not once per repeated "
+                               "copy (the frameworks repeat it for several noise levels per sample)"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",

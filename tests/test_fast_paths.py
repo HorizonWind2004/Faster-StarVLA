@@ -152,7 +152,7 @@ def _check_flash_attention():
     os.environ["STARVLA_FAST"] = "all"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
-                       "compile_lm", "compile_vision"], applied
+                       "compile_lm", "compile_vision", "condition_once"], applied
     assert skipped == ["worker_prep"] and _implementations(model) == {"sdpa"}
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
@@ -247,6 +247,45 @@ def _check_worker_prep(model_dir):
           f"{', '.join(prompts)} ({', '.join(sorted(reference.keys()))} + position_ids)")
 
 
+def _check_condition_once():
+    """The action DiT with conditioning that is 4 copies of 3 rows (what the flow-matching frameworks hand it): with
+    condition_once the key / value projections see 3 rows instead of 12, and loss and gradients are the same up to
+    rounding (fp64 here). Conditioning that is not repeated runs as before."""
+    from starVLA.fast import condition_once
+    from starVLA.model.modules.action_model.flow_matching_head.cross_attention_dit import DiT
+
+    def step(layerwise, repeats):
+        torch.manual_seed(0)
+        dit = DiT(num_attention_heads=4, attention_head_dim=16, output_dim=32, num_layers=4, dropout=0.0,
+                  interleave_self_attention=True, cross_attention_dim=48).train().double()
+        condition = [torch.randn(3, 11, 48, dtype=torch.double).repeat(repeats, 1, 1) for _ in range(4)]
+        mask = torch.ones(3 * repeats, 11, dtype=torch.bool)
+        mask[:, -2:] = False
+        projected = []
+        for block in dit.transformer_blocks:
+            if block.attn1.is_cross_attention:
+                block.attn1.to_k.register_forward_hook(lambda module, args, output: projected.append(args[0].shape[0]))
+        loss = dit(hidden_states=torch.randn(3 * repeats, 5, 64, dtype=torch.double),
+                   encoder_hidden_states=condition if layerwise else condition[0],
+                   timestep=torch.randint(0, 1000, (3 * repeats,)), encoder_attention_mask=mask,
+                   return_pre_output=True).pow(2).mean()
+        loss.backward()
+        return loss.item(), torch.cat([p.grad.flatten() for p in dit.parameters() if p.grad is not None]), projected
+
+    cases = [(layerwise, repeats) for layerwise in (False, True) for repeats in (4, 1)]
+    before = [step(*case) for case in cases]
+    assert condition_once.apply(None)
+    for (layerwise, repeats), (loss, grads, projected) in zip(cases, before):
+        fast_loss, fast_grads, fast_projected = step(layerwise, repeats)
+        assert abs(fast_loss - loss) <= 1e-12 * abs(loss) and (fast_grads - grads).norm() <= 1e-10 * grads.norm()
+        assert projected == [3 * repeats] * 2 and fast_projected == [3] * 2, (projected, fast_projected)
+    print("ok condition_once: key / value projections on 3 rows instead of 12, loss and gradients equal to rounding")
+
+
+def test_condition_once():
+    _in_subprocess("condition_once")
+
+
 def test_selection():
     from starVLA import fast
 
@@ -274,7 +313,7 @@ def test_selection():
                          "DS_FUSED_GRAD_NORM", "COMPILE_LM", "DS_PLAIN_ALLREDUCE", "COMPILE_VISION")
         for name in first_release:
             os.environ["STARVLA_" + name] = "1"
-        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa"}
+        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa", "condition_once"}
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
         assert fast.selection() == fast.LEVELS["exact"]
@@ -324,11 +363,13 @@ if __name__ == "__main__":
         if os.path.isdir(sys.argv[1]):
             _check_worker_prep(sys.argv[1])
         else:
-            _check_flash_attention() if sys.argv[1] == "flash" else _check(sys.argv[1])
+            {"flash": _check_flash_attention, "condition_once": _check_condition_once}.get(
+                sys.argv[1], lambda: _check(sys.argv[1]))()
     else:
         test_selection()
         print("ok selection")
         test_qwen3_vl_bitwise()
         test_qwen2_5_vl_bitwise()
         test_flash_attention_backbone()
+        test_condition_once()
         test_worker_prep()
