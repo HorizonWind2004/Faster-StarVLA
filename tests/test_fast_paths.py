@@ -68,6 +68,8 @@ def _vision_attention_calls(model, inputs):
     """Number of scaled_dot_product_attention calls inside one forward of the vision tower."""
     import torch.nn.functional as F
 
+    with torch.no_grad():  # let vision_attn probe this shape before the calls are counted
+        model.model.visual(inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])
     calls, original = [0], F.scaled_dot_product_attention
 
     def counting(*args, **kwargs):
@@ -123,6 +125,9 @@ def _check(family):
     calls_after = _vision_attention_calls(model, inputs)
     depth = len(model.model.visual.blocks)
     assert calls_after == depth < calls_before, (calls_before, calls_after, depth)
+    from starVLA.fast import vision_attn
+
+    assert vision_attn.decisions and all(vision_attn.decisions.values()), vision_attn.decisions  # probes ran, passed
     print(f"ok {family}: {len(grads)} gradients, hidden states and logits bitwise identical "
           f"({', '.join(cases)}; fast paths: {', '.join(applied)}); "
           f"vision attention calls per forward {calls_before} -> {calls_after}")
@@ -141,6 +146,7 @@ def test_selection():
         assert not fast.enabled("reduce_to_owner")
         os.environ["STARVLA_FAST"] = "all,-worker_prep"
         assert fast.enabled("compile_vision") and not fast.enabled("worker_prep")
+        assert fast.enabled("vision_attn_relaxed") and "vision_attn_relaxed" not in fast.LEVELS["exact"]
         os.environ["STARVLA_FAST"] = "off"
         os.environ["STARVLA_BATCHED_VISION_ATTN"] = "1"  # variable of the first release
         assert fast.selection() == frozenset({"vision_attn"})

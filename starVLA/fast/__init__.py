@@ -36,7 +36,8 @@ FAST_PATHS = {
                             "no vocabulary logits when the caller asks for hidden states and has no labels",
                             ("STARVLA_SKIP_LM_HEAD", "STARVLA_INFER_SKIP_LM_HEAD")),
     "vision_attn": FastPath(True, "backbone", "vision_attn:apply",
-                            "one batched attention call per vision layer instead of one per image",
+                            "one batched attention call per vision layer instead of one per image, for the "
+                            "shapes where a probe on this device shows the batched call is bitwise identical",
                             ("STARVLA_BATCHED_VISION_ATTN",)),
     "vision_pos": FastPath(True, "backbone", "vision_pos:apply",
                            "vision position tables built once per grid size instead of in every forward",
@@ -50,6 +51,8 @@ FAST_PATHS = {
     "allreduce": FastPath(True, "engine", "deepspeed:plain_allreduce",
                           "DeepSpeed ZeRO-2 gradient buckets all-reduced in place",
                           ("STARVLA_DS_PLAIN_ALLREDUCE",)),
+    "vision_attn_relaxed": FastPath(False, "backbone", "vision_attn:apply_relaxed",
+                                    "the batched vision attention for every uniform shape (last-bit differences)"),
     "compile_lm": FastPath(False, "backbone", "compile:apply_lm",
                            "decoder layers compiled with Inductor for training calls",
                            ("STARVLA_COMPILE_LM",)),

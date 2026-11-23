@@ -9,9 +9,19 @@ When all chunks have the same length (the usual case in training, where every vi
 chunks are a batch: one attention call per layer on [chunks, heads, length, dim], and no host read in the layers.
 The layout is derived once per vision forward from grid_thw on the host. Qwen2.5-VL alternates between full
 attention (one chunk per frame) and window attention (one chunk per window); each kind is batched when it is
-uniform. Any other case falls back to the upstream code. Same outputs and gradients, bit for bit.
+uniform. Any other case falls back to the upstream code.
+
+Batching is the same arithmetic, but a GPU library may pick a different matrix-product kernel for a different batch
+size, and then the last bit can differ (on B300 with bf16: 32 chunks of 256 tokens are bitwise identical to 32
+single calls at head dimension 64, not at 72 or 80; chunks of 64 tokens are identical at all three). So before a
+layout is batched, `vision_attn` runs both forms once on random tensors of exactly that shape, dtype and device,
+forward and backward, and batches the layout only if they agree bit for bit; otherwise that layout keeps the
+upstream per-chunk calls. `vision_attn_relaxed` (not an exact fast path) batches every uniform layout.
 """
 import sys
+
+import torch
+import torch.nn.functional as F
 
 _FAMILIES = {  # transformers modeling module -> (attention class, vision model class, has window attention)
     "transformers.models.qwen3_vl.modeling_qwen3_vl": ("Qwen3VLVisionAttention", "Qwen3VLVisionModel", False),
@@ -21,6 +31,8 @@ _FAMILIES = {  # transformers modeling module -> (attention class, vision model 
 }
 _installed = set()
 _MAX_ENTRIES = 16
+_relaxed = False
+decisions = {}  # (chunks, length, heads, head_dim, dtype, device, with gradients) -> batched call is bitwise identical
 
 
 class _State:
@@ -48,6 +60,39 @@ def _window_layout(vision_model, grid_thw):
     return _uniform([b - a for a, b in zip(bounds, bounds[1:])])
 
 
+def _bitwise(layout, heads, head_dim, dtype, device):
+    """Is one attention call on [chunks, heads, length, head_dim] bitwise identical to one call per chunk here?"""
+    if layout is None or _relaxed:
+        return layout
+    with_grad = torch.is_grad_enabled()
+    key = (*layout, heads, head_dim, str(dtype), str(device), with_grad)
+    if key not in decisions:
+        chunks, length = layout
+        generator = torch.Generator().manual_seed(0)
+
+        def random():
+            return torch.randn(chunks, heads, length, head_dim, generator=generator).to(device=device, dtype=dtype)
+
+        with torch.autocast(device.type, enabled=False):
+            q, k, v, weight = random(), random(), random(), random()
+            if with_grad:
+                q, k, v = q.requires_grad_(), k.requires_grad_(), v.requires_grad_()
+            batched = F.scaled_dot_product_attention(q, k, v)
+            single = torch.cat(
+                [F.scaled_dot_product_attention(q[i:i + 1], k[i:i + 1], v[i:i + 1]) for i in range(chunks)]
+            )
+            same = torch.equal(batched, single)
+            if same and with_grad:
+                grads = [torch.autograd.grad((out * weight).sum(), (q, k, v)) for out in (batched, single)]
+                same = all(torch.equal(a, b) for a, b in zip(*grads))
+        decisions[key] = same
+        if not same:
+            print(f"[starVLA.fast] vision_attn: {chunks} chunks x {length} tokens ({heads} heads x {head_dim}, "
+                  f"{dtype}) is not bitwise identical when batched on {device}; these layers keep the upstream "
+                  f"attention (vision_attn_relaxed batches them)", flush=True)
+    return layout if decisions[key] else None
+
+
 def _layout(cu_seqlens):
     if not _State.windowed:
         return _State.frames
@@ -70,11 +115,19 @@ def install(modeling):
 
     def model_forward(self, hidden_states, grid_thw, **kwargs):
         rows = tuple(tuple(row) for row in grid_thw.tolist())  # one host read per forward
-        key = (id(self), rows)
+        attention = self.blocks[0].attn
+        weight = attention.qkv.weight
+        device = weight.device
+        dtype = torch.get_autocast_dtype(device.type) if torch.is_autocast_enabled(device.type) else weight.dtype
+        key = (id(self), rows, dtype, torch.is_grad_enabled(), _relaxed)
         if key not in layouts:
             if len(layouts) >= _MAX_ENTRIES:
                 layouts.pop(next(iter(layouts)))
-            layouts[key] = (_frame_layout(rows), _window_layout(self, grid_thw) if windowed else None)
+            shape = (attention.num_heads, weight.shape[1] // attention.num_heads, dtype, device)
+            layouts[key] = (
+                _bitwise(_frame_layout(rows), *shape),
+                _bitwise(_window_layout(self, grid_thw), *shape) if windowed else None,
+            )
         _State.frames, _State.windows = layouts[key]
         _State.windowed = windowed
         try:
@@ -120,6 +173,15 @@ def install(modeling):
     attention_class.forward = forward
     model_class.forward = model_forward
     _installed.add(modeling.__name__)
+
+
+def apply_relaxed(vlm):
+    """vision_attn for every uniform layout, without the bitwise probe."""
+    global _relaxed
+    if not apply(vlm):
+        return False
+    _relaxed = True
+    return True
 
 
 def apply(vlm):
