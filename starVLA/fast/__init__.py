@@ -12,7 +12,7 @@ callers are four hooks, none of them in a framework:
     get_vlm_model()            -> fast.accelerate_backbone(vlm)       every backbone interface
     build_framework()          -> fast.accelerate_framework(model)    the framework as a whole (action head, precision)
     the trainer                -> fast.accelerate_engine(engine)      the DeepSpeed engine
-    build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers (for worker_prep)
+    build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers (worker_prep, worker_examples)
 
 To add a fast path: a module here with `apply(target) -> bool` (False = does not apply), and a line in FAST_PATHS.
 """
@@ -27,6 +27,7 @@ class FastPath(NamedTuple):
     apply: str  # "module:function" under starVLA.fast
     summary: str
     legacy: tuple = ()  # the per-path environment variables of the first release, still honoured
+    collate: str = ""  # "module:function" wrapping the data loader's collate function, for work moved to the workers
 
 
 FAST_PATHS = {  # applied in this order
@@ -48,7 +49,10 @@ FAST_PATHS = {  # applied in this order
                            ("STARVLA_VISION_POS_CACHE",)),
     "worker_prep": FastPath(True, "backbone", "worker_prep:apply",
                             "the interface's input construction (VLM processor) in the data-loader workers",
-                            ("STARVLA_PREP_IN_WORKERS",)),
+                            ("STARVLA_PREP_IN_WORKERS",), "worker_prep:collate"),
+    "worker_examples": FastPath(True, "framework", "openpi:worker_examples",
+                                "PI0 / PI05: the framework's sample preparation (image resize and padding, state "
+                                "and action padding) in the data-loader workers", (), "openpi:collate"),
     "grad_norm": FastPath(True, "engine", "deepspeed:fused_grad_norm",
                           "DeepSpeed ZeRO-2 clipping norm without an fp64 copy of every gradient",
                           ("STARVLA_DS_FUSED_GRAD_NORM",)),
@@ -69,6 +73,9 @@ FAST_PATHS = {  # applied in this order
     "unused_views": FastPath(False, "framework", "openpi:unused_views",
                              "PI0 / PI05: a camera view that no sample of the batch has is left out instead of "
                              "being encoded as a black image and masked"),
+    "openpi_sdpa": FastPath(False, "framework", "openpi:use_sdpa",
+                            "PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint "
+                            "PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
@@ -164,9 +171,9 @@ def accelerate_engine(engine):
 
 
 def worker_collate(cfg, collate_fn):
-    """`collate_fn`, or one that also builds the backbone's inputs in the data-loader worker (see worker_prep)."""
-    if not enabled("worker_prep"):
-        return collate_fn
-    from starVLA.fast import worker_prep
-
-    return worker_prep.collate(cfg, collate_fn)
+    """`collate_fn`, wrapped by the selected fast paths that move work into the data-loader workers."""
+    for name, path in FAST_PATHS.items():
+        if path.collate and enabled(name):
+            module, function = path.collate.split(":")
+            collate_fn = getattr(importlib.import_module(f"starVLA.fast.{module}"), function)(cfg, collate_fn)
+    return collate_fn

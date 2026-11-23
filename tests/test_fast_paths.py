@@ -314,10 +314,10 @@ def test_selection():
                          "DS_FUSED_GRAD_NORM", "COMPILE_LM", "DS_PLAIN_ALLREDUCE", "COMPILE_VISION")
         for name in first_release:
             os.environ["STARVLA_" + name] = "1"
-        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed", "sdpa", "condition_once", "unused_views"}
+        assert fast.selection() == frozenset(n for n, p in fast.FAST_PATHS.items() if p.legacy) - {"reduce_to_owner"}
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
-        assert fast.selection() == fast.LEVELS["exact"]
+        assert fast.selection() == fast.LEVELS["exact"] - {"worker_examples"}
         os.environ["STARVLA_FAST"] = "nonsense"
         try:
             fast.selection()

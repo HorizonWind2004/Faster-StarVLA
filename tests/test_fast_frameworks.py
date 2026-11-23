@@ -5,7 +5,8 @@ tokenizer and config of a model directory, so the prompts and the image pipeline
 
     STARVLA_TEST_VLMS=<dir of Qwen3-VL-4B-Instruct>[,<dir of Qwen2.5-VL-3B-Instruct>] python tests/test_fast_frameworks.py
 
-With STARVLA_TEST_PALIGEMMA_TOKENIZER=<paligemma_tokenizer.model>, also the unused_views path of PI0 and PI05.
+With STARVLA_TEST_PALIGEMMA_TOKENIZER=<paligemma_tokenizer.model>, also the PI0 / PI05 paths (worker_examples,
+unused_views, openpi_sdpa).
 """
 import dataclasses
 import hashlib
@@ -147,14 +148,20 @@ def _check(model_dir):
             del model, loader
 
 
-def _check_unused_views(tokenizer_model):
-    """PI0 and PI05 (small Gemma towers, fp64) on samples with two of the three camera views: with unused_views the
-    prefix is 256 tokens shorter, and the loss, the gradients and the predicted actions are the same to rounding."""
+def _check_openpi(tokenizer_model):
+    """PI0 and PI05 (small Gemma towers, fp64) on samples with two of the three camera views. worker_examples: a batch
+    from a DataLoader with workers gives the same loss and gradients bit for bit. unused_views: the prefix is 256
+    tokens shorter; openpi_sdpa: fused attention; with either, the loss, the gradients and the predicted actions
+    are the same to rounding."""
     import numpy as np
     import torch
     from omegaconf import OmegaConf
     from PIL import Image
+    from torch.utils.data import DataLoader
 
+    from starVLA import fast
+    from starVLA.dataloader.lerobot_datasets import collate_fn
+    from starVLA.fast import openpi
     from starVLA.model.framework.base_framework import build_framework
 
     rng = np.random.default_rng(0)
@@ -175,8 +182,12 @@ def _check_unused_views(tokenizer_model):
             model = build_framework(cfg).double().train()
             prefix_tokens, joint_layers = [], model.forward_with_action_expert
             model.forward_with_action_expert = lambda **kw: (prefix_tokens.append(kw["prefix_embs"].shape[1]), joint_layers(**kw))[1]
+            batch = samples
+            if setting == "worker_examples":
+                batch = next(iter(DataLoader(samples, batch_size=len(samples), num_workers=1,
+                                             collate_fn=fast.worker_collate(cfg, collate_fn))))
             torch.manual_seed(1)
-            loss = model(samples)["action_loss"]
+            loss = model(batch)["action_loss"]
             loss.backward()
             grads = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
             torch.manual_seed(2)
@@ -184,20 +195,28 @@ def _check_unused_views(tokenizer_model):
             return float(loss), grads, prefix_tokens[0], torch.as_tensor(actions["normalized_actions"])
 
         loss, grads, tokens, actions = run("off")
-        fast_loss, fast_grads, fast_tokens, fast_actions = run("unused_views")
-        assert fast_tokens == tokens - 256, (tokens, fast_tokens)
-        assert abs(fast_loss - loss) <= 1e-6 * abs(loss) and (fast_grads - grads).norm() <= 1e-6 * grads.norm()
-        assert (fast_actions - actions).abs().max() <= 1e-5
-        print(f"ok {framework} unused_views: prefix {tokens} -> {fast_tokens} tokens, loss, gradients and actions equal "
-              f"to rounding", flush=True)
+        used = openpi.stats["used"]
+        worker_loss, worker_grads, _, worker_actions = run("worker_examples")
+        assert openpi.stats["used"] == used + 1, openpi.stats
+        assert worker_loss == loss and torch.equal(worker_grads, grads) and torch.equal(worker_actions, actions)
+        print(f"ok {framework} worker_examples: samples prepared in a worker, loss and {grads.numel():,} gradient "
+              f"values identical", flush=True)
+        for setting in ("unused_views", "openpi_sdpa"):
+            fast_loss, fast_grads, fast_tokens, fast_actions = run(setting)
+            assert fast_tokens == tokens - (256 if setting == "unused_views" else 0), (tokens, fast_tokens)
+            assert abs(fast_loss - loss) <= 1e-6 * abs(loss) and (fast_grads - grads).norm() <= 1e-6 * grads.norm()
+            assert (fast_actions - actions).abs().max() <= 1e-5
+            assert not torch.equal(fast_grads, grads)  # the path took effect
+            print(f"ok {framework} {setting}: prefix {tokens} -> {fast_tokens} tokens, loss, gradients and actions "
+                  f"equal to rounding", flush=True)
 
 
-def test_openpi_unused_views():
+def test_openpi():
     tokenizer_model = os.environ.get("STARVLA_TEST_PALIGEMMA_TOKENIZER", "")
     if not tokenizer_model:
-        print("skipped unused_views: STARVLA_TEST_PALIGEMMA_TOKENIZER is not set")
+        print("skipped PI0 / PI05: STARVLA_TEST_PALIGEMMA_TOKENIZER is not set")
         return
-    result = subprocess.run([sys.executable, __file__, "--unused-views", tokenizer_model], capture_output=True, text=True)
+    result = subprocess.run([sys.executable, __file__, "--openpi", tokenizer_model], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-3000:]
     print("\n".join(line for line in result.stdout.splitlines() if line.startswith("ok ")))
 
@@ -214,10 +233,10 @@ def test_frameworks_train_on_worker_inputs():
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if sys.argv[1:2] == ["--unused-views"]:
-        _check_unused_views(sys.argv[2])
+    if sys.argv[1:2] == ["--openpi"]:
+        _check_openpi(sys.argv[2])
     elif len(sys.argv) > 1:
         _check(sys.argv[1])
     else:
         test_frameworks_train_on_worker_inputs()
-        test_openpi_unused_views()
+        test_openpi()
