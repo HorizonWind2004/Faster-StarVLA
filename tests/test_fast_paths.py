@@ -150,6 +150,15 @@ def test_selection():
         os.environ["STARVLA_FAST"] = "off"
         os.environ["STARVLA_BATCHED_VISION_ATTN"] = "1"  # variable of the first release
         assert fast.selection() == frozenset({"vision_attn"})
+        # the nine variables of the first release select the paths they named (nothing relaxed)
+        first_release = ("PREP_IN_WORKERS", "SKIP_LM_HEAD", "FAST_ATTN_MASK", "BATCHED_VISION_ATTN", "VISION_POS_CACHE",
+                         "DS_FUSED_GRAD_NORM", "COMPILE_LM", "DS_PLAIN_ALLREDUCE", "COMPILE_VISION")
+        for name in first_release:
+            os.environ["STARVLA_" + name] = "1"
+        assert fast.selection() == fast.LEVELS["all"] - {"vision_attn_relaxed"}
+        for name in ("COMPILE_LM", "COMPILE_VISION"):
+            del os.environ["STARVLA_" + name]
+        assert fast.selection() == fast.LEVELS["exact"]
         os.environ["STARVLA_FAST"] = "nonsense"
         try:
             fast.selection()
