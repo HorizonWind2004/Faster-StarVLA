@@ -83,6 +83,9 @@ FAST_PATHS = {  # applied in this order
     "compile_world_model": FastPath(False, "backbone", "compile:apply_world_model",
                                     "transformer blocks of a video world-model backbone (Wan, Cosmos-Predict2) "
                                     "compiled with Inductor for training calls"),
+    "text_longest": FastPath(False, "backbone", "world_model:text_longest",
+                             "Wan: the UMT5 text encoder on the batch's longest instruction instead of 512 padded "
+                             "tokens (upstream zeroes every position past the instruction afterwards)"),
     "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),
@@ -174,14 +177,35 @@ def _run(hook, target):
     return applied, skipped
 
 
+_accelerated = set()  # ids of the Hugging Face models that went through the backbone hook
+# where a framework that builds its backbone itself (not with get_vlm_model) keeps it: MiniCPM-RobotManip's
+# released checkpoint is one model, `vlm` (MiniCPM-V 4.6) + action head
+_INNER_BACKBONES = ("model.vlm",)
+
+
+class InnerBackbone:
+    """A framework's own backbone model, presented to the backbone hook as an interface (`.model`)."""
+
+    def __init__(self, model):
+        self.model = model
+
+
 def accelerate_backbone(vlm):
     """Backbone fast paths for a VLM interface (anything whose `.model` is the Hugging Face model). Returns `vlm`."""
+    _accelerated.add(id(getattr(vlm, "model", vlm)))
     _run("backbone", vlm)
     return vlm
 
 
 def accelerate_framework(framework):
-    """Fast paths for a built framework (anything `build_framework` returns). Returns `framework`."""
+    """Fast paths for a built framework (anything `build_framework` returns). Returns `framework`. A backbone the
+    framework built itself gets the backbone paths first."""
+    for path in _INNER_BACKBONES:
+        inner = framework
+        for name in path.split("."):
+            inner = getattr(inner, name, None)
+        if callable(getattr(inner, "parameters", None)) and id(inner) not in _accelerated:
+            accelerate_backbone(InnerBackbone(inner))
     _run("framework", framework)
     return framework
 

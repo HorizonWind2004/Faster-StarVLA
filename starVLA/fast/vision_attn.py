@@ -1,6 +1,7 @@
 """Batched attention for the Qwen vision towers when every image has the same number of patches.
 
-The vision attention of Qwen2-VL, Qwen2.5-VL and Qwen3-VL (the same code in transformers 4.57) receives all patches
+The vision attention of Qwen2-VL, Qwen2.5-VL and Qwen3-VL (the same code in transformers 4.57), and of Qwen3.5
+(transformers 5), receives all patches
 of all images as one sequence plus the chunk boundaries (cu_seqlens). With any implementation but flash-attention it
 reads the chunk lengths back to the host in every layer (`lengths.tolist()`: a GPU sync per layer) and then runs one
 attention call per chunk: 24 layers x 32 images per training step at batch 16 x 2 views.
@@ -28,6 +29,8 @@ _FAMILIES = {  # transformers modeling module -> (attention class, vision model 
     "transformers.models.qwen2_5_vl.modeling_qwen2_5_vl": (
         "Qwen2_5_VLVisionAttention", "Qwen2_5_VisionTransformerPretrainedModel", True),
     "transformers.models.qwen2_vl.modeling_qwen2_vl": ("VisionAttention", "Qwen2VisionTransformerPretrainedModel", False),
+    # transformers 5: the same attention code (per-chunk calls after lengths.tolist() unless flash-attention)
+    "transformers.models.qwen3_5.modeling_qwen3_5": ("Qwen3_5VisionAttention", "Qwen3_5VisionModel", False),
 }
 _installed = set()
 _MAX_ENTRIES = 16
@@ -149,8 +152,10 @@ def install(modeling):
         impl = self.config._attn_implementation
         uniform = None if impl in _UPSTREAM_ONLY else _layout(cu_seqlens)
         if uniform is None:
-            return original(self, hidden_states, cu_seqlens, rotary_pos_emb=rotary_pos_emb,
-                            position_embeddings=position_embeddings, **kwargs)
+            if rotary_pos_emb is not None:  # transformers 4.x only; the 5.x signature has no such argument
+                kwargs["rotary_pos_emb"] = rotary_pos_emb
+            return original(self, hidden_states, cu_seqlens, position_embeddings=position_embeddings, **kwargs)
+        kwargs.pop("max_seqlen", None)  # transformers 5.x: used by the flash-attention branch only
         chunks, length = uniform
         seq_length = hidden_states.shape[0]
         query_states, key_states, value_states = (

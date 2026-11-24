@@ -60,6 +60,9 @@ def apply(vlm):
             kwargs.get("output_hidden_states") is True
             and kwargs.get("labels") is None
             and kwargs.get("return_dict", True) is not False
+            # an interface that already keeps the logits of a few positions only (Gemma 4, MiniCPM-V pass
+            # logits_to_keep=1): nothing left to save, and Gemma 4 post-processes its logits (soft-capping)
+            and not (isinstance(kwargs.get("logits_to_keep"), int) and kwargs["logits_to_keep"] > 0)
         )
         if not hidden_only:
             return upstream_forward(*args, **kwargs)

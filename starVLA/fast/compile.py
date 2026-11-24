@@ -16,6 +16,7 @@ import torch
 
 _gc = {"layers": 0, "calls": 0, "frozen": False, "reported": False}
 _FREEZE_AFTER_STEPS = 4  # training forwards before the freeze
+_failed_kinds = set()
 
 
 def _raise_cache_limits(entries):
@@ -39,9 +40,13 @@ HEAD_OPTIONS = {"fallback_random": True, "triton.coalesce_tiling_analysis": Fals
 def _compiled_for_training(eager, dynamic, options=None):
     compiled = torch.compile(eager, dynamic=dynamic, **({"options": options} if options else {}))
     state = {"works": None}  # None until the first compiled call has returned
+    kind = _kind(eager)  # layers of one structure: once one fails to compile, the others are not tried
 
     def call(*args, **kwargs):
         if not torch.is_grad_enabled() or state["works"] is False:
+            return eager(*args, **kwargs)
+        if state["works"] is None and kind in _failed_kinds:
+            state["works"] = False
             return eager(*args, **kwargs)
         try:
             out = compiled(*args, **kwargs)
@@ -49,6 +54,8 @@ def _compiled_for_training(eager, dynamic, options=None):
             if state["works"]:  # it has worked before: this is the caller's error
                 raise
             state["works"] = False  # a module the compiler cannot handle stays eager
+            if kind is not None:  # and so do the layers of the same structure (Qwen3.5: its linear-attention layers)
+                _failed_kinds.add(kind)
             if not _gc["reported"]:
                 _gc["reported"] = True
                 print(f"[starVLA.fast] compile: a layer could not be compiled and runs as before "
@@ -60,6 +67,15 @@ def _compiled_for_training(eager, dynamic, options=None):
         return out
 
     return call
+
+
+def _kind(method):
+    """A layer's class and the classes of its children (Qwen3.5's decoder layers are one class with either linear or
+    full attention inside); None for anything but a module's method."""
+    owner = getattr(method, "__self__", None)
+    if not isinstance(owner, torch.nn.Module):
+        return None
+    return (type(owner), tuple(type(child) for child in owner.children()))
 
 
 def _compile_forwards(layers, dynamic, options=None):
@@ -118,9 +134,13 @@ def _apply(vlm, paths, dynamic=True):
 
 def apply_lm(vlm):
     """Compile the decoder layers of the backbone's language model: `model.model.language_model.layers` in the
-    Qwen-VL and Gemma families; the other places are where other Hugging Face multimodal wrappers keep them."""
+    Qwen-VL (Qwen3.5 included), Gemma 4 and MiniCPM-V (transformers 5) families; the other places are where other
+    Hugging Face multimodal wrappers keep them. A layer Dynamo cannot trace (e.g. a linear-attention kernel of an
+    extension) stays eager on its own; the others are compiled."""
     return _apply(vlm, ("model.model.language_model.layers", "model.language_model.model.layers",
-                        "model.language_model.layers"))
+                        "model.language_model.layers",
+                        "model.llm.model.layers",  # MiniCPM-V with its own (remote) code
+                        "model.language_model.model.encoder.layers"))  # Florence-2: starVLA runs the encoder only
 
 
 def apply_vision(vlm):
@@ -128,7 +148,10 @@ def apply_vision(vlm):
     be used with vision_attn, whose per-layer code has no host reads), the encoder layers of a SigLIP / CLIP style
     tower elsewhere."""
     return _apply(vlm, ("model.model.visual.blocks", "model.model.vision_tower.vision_model.encoder.layers",
-                        "model.vision_tower.vision_model.encoder.layers", "model.model.vision_tower.encoder.layers"))
+                        "model.vision_tower.vision_model.encoder.layers",
+                        "model.model.vision_tower.encoder.layers",  # Gemma 4, MiniCPM-V 4.6 / 4.7 (transformers 5)
+                        "model.vpm.encoder.layers",  # MiniCPM-V with its own (remote) code
+                        "model.vision_tower.blocks"))  # Florence-2's DaViT: one entry per stage
 
 
 def apply_world_model(backbone):

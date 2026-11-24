@@ -1,4 +1,4 @@
-"""Memoized position tables for the Qwen vision towers.
+"""Memoized position tables for the Qwen vision towers (and, with transformers 5, every tower built on vision_utils).
 
 The vision models of Qwen2-VL, Qwen2.5-VL and Qwen3-VL compute, in every forward and with a Python loop over the
 images that reads GPU scalars back to the host, things that depend only on the grid sizes (grid_thw), not on any
@@ -160,13 +160,100 @@ _FAMILIES = {
 }
 
 
-def apply(vlm):
-    """Memoize the position tables if the backbone's vision tower is one of the Qwen families."""
-    visual = getattr(getattr(getattr(vlm, "model", None), "model", None), "visual", None)
-    family = type(visual).__module__
-    if visual is None or family not in _FAMILIES:
+# ---- transformers 5: the vision towers take these tables from module-level helpers (transformers.vision_utils), each
+# of which returns a precomputed value instead when the caller passes one. Qwen3-VL, Qwen3.5 and MiniCPM-V 4.6 / 4.7
+# call them in every forward: per-image Python loops (position ids), dozens of small GPU ops (interpolation indices,
+# cumulative lengths) and host reads. Memoizing the helpers per grid gives the same tensors without that work.
+_PRECOMPUTED = frozenset({"cu_seqlens", "max_seqlen", "position_ids", "interp_indices", "interp_weights",
+                          "bilinear_indices", "bilinear_weights", "window_index", "cu_window_seqlens", "merged_shape"})
+_last_grid = [None, None, None]  # the grid tensor last read, its version counter, its key
+
+
+def _frozen(value):
+    return tuple(_frozen(v) for v in value) if isinstance(value, list) else value
+
+
+def _tensor_key(tensor):
+    """The contents of a small index tensor (grid_thw, target sizes): one host read, shared by the helpers of a forward."""
+    if _last_grid[0] is tensor and _last_grid[1] == tensor._version:
+        return _last_grid[2]
+    key = (_frozen(tensor.tolist()), tensor.dtype, str(tensor.device))
+    _last_grid[:] = [tensor, tensor._version, key]
+    return key
+
+
+def _argument_key(value):
+    if isinstance(value, torch.Tensor):
+        return _tensor_key(value)
+    if hasattr(value, "_attn_implementation"):  # a config: only the attention implementation matters (max_seqlen)
+        return ("config", id(value), value._attn_implementation)
+    hash(value)  # TypeError for anything else unhashable: no memoization
+    return value
+
+
+def _memoized_helper(helper):
+    cache = {}
+
+    def memoized(grid, *args, kwargs=None, **options):
+        if kwargs and _PRECOMPUTED & kwargs.keys():  # the caller passes its own table: upstream pops and returns it
+            return helper(grid, *args, kwargs=kwargs, **options)
+        try:
+            key = (_argument_key(grid), tuple(_argument_key(a) for a in args),
+                   tuple(sorted((k, _argument_key(v)) for k, v in options.items())))
+        except TypeError:
+            return helper(grid, *args, kwargs=kwargs, **options)
+        if key not in cache:
+            _remember(cache, key, helper(grid, *args, kwargs=kwargs, **options))
+        return cache[key]
+
+    memoized._starvla_original = helper
+    return memoized
+
+
+def _install_vision_utils(modeling):
+    """Memoize the transformers.vision_utils helpers that this modeling module calls. False if it calls none."""
+    try:
+        from transformers import vision_utils
+    except ImportError:
         return False
-    if family not in _installed:
-        _FAMILIES[family](sys.modules[family])
+    found = False
+    for name, value in list(vars(modeling).items()):
+        if name.startswith("get_") and callable(value) and getattr(vision_utils, name, None) is value:
+            setattr(modeling, name, _memoized_helper(value))
+            found = True
+        elif getattr(value, "_starvla_original", None) is not None and name.startswith("get_"):
+            found = True
+    return found
+
+
+def _vision_tower(vlm):
+    core = getattr(getattr(vlm, "model", None), "model", None)
+    for name in ("visual", "vision_tower"):
+        tower = getattr(core, name, None)
+        if tower is not None:
+            return tower
+    return None
+
+
+def apply(vlm):
+    """Memoize the position tables if the backbone's vision tower is one of the Qwen families (transformers 4), or
+    builds them with the helpers of transformers.vision_utils (transformers 5)."""
+    visual = _vision_tower(vlm)
+    if visual is None:
+        return False
+    family = type(visual).__module__
+    modeling = sys.modules.get(family)
+    if family in _installed:
+        return True
+    if modeling is not None and _install_vision_utils(modeling):
         _installed.add(family)
+        return True
+    if family not in _FAMILIES:
+        return False
+    try:
+        _FAMILIES[family](modeling)
+    except AttributeError as error:  # another transformers version, whose classes lack these methods
+        print(f"[starVLA.fast] vision_pos: {family} has another layout here ({error}); left alone", flush=True)
+        return False
+    _installed.add(family)
     return True

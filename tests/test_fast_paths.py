@@ -19,6 +19,19 @@ def _tiny(family):
     text = dict(vocab_size=160, hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
                 num_key_value_heads=2, max_position_embeddings=512, pad_token_id=0, bos_token_id=1, eos_token_id=2,
                 rope_scaling={"rope_type": "default", "mrope_section": [4, 2, 2]})  # head_dim 16 = 2 * (4 + 2 + 2)
+    if family == "qwen3_5":  # transformers 5: three linear-attention layers and one full-attention layer
+        from transformers import Qwen3_5Config, Qwen3_5ForConditionalGeneration
+
+        text = dict(vocab_size=160, hidden_size=64, intermediate_size=128, num_hidden_layers=4, num_attention_heads=4,
+                    num_key_value_heads=2, head_dim=16, linear_key_head_dim=16, linear_value_head_dim=16,
+                    linear_num_key_heads=2, linear_num_value_heads=4, max_position_embeddings=512, pad_token_id=0,
+                    rope_parameters={"rope_type": "default", "rope_theta": 10000.0, "mrope_section": [1, 1, 0],
+                                     "mrope_interleaved": True, "partial_rotary_factor": 0.25})
+        vision = dict(depth=2, hidden_size=32, intermediate_size=64, num_heads=4, patch_size=4, spatial_merge_size=2,
+                      temporal_patch_size=2, out_hidden_size=64, num_position_embeddings=36)
+        config = Qwen3_5Config(text_config=text, vision_config=vision, image_token_id=150, video_token_id=151,
+                               vision_start_token_id=152, vision_end_token_id=153)
+        return Qwen3_5ForConditionalGeneration._from_config(config, attn_implementation="sdpa").float()
     if family == "qwen3":
         from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
 
@@ -57,12 +70,15 @@ def _inputs(model, grids):
     length = max(len(r) for r in rows)
     input_ids = torch.tensor([[0] * (length - len(r)) + r for r in rows])
     attention_mask = torch.tensor([[0] * (length - len(r)) + [1] * len(r) for r in rows])
-    return dict(
+    inputs = dict(
         input_ids=input_ids,
         attention_mask=attention_mask,
         pixel_values=torch.randn(sum(h * w for h, w in grids), patch_dim),
         image_grid_thw=torch.tensor([[1, h, w] for h, w in grids]),
     )
+    if model.config.model_type == "qwen3_5":  # transformers 5 processors return the modality of every token
+        inputs["mm_token_type_ids"] = (input_ids == 150).long()
+    return inputs
 
 
 def _vision_attention_calls(model, inputs):
@@ -108,7 +124,9 @@ def _check(family):
 
     os.environ["STARVLA_FAST"] = ",".join(BACKBONE_PATHS)
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
-    assert sorted(applied) == sorted(BACKBONE_PATHS) and not skipped, (applied, skipped)
+    # transformers 5 builds its masks differently: attn_mask checks its builder against the installed one first
+    expected = [p for p in BACKBONE_PATHS if not (family == "qwen3_5" and p == "attn_mask" and p in skipped)]
+    assert sorted(applied) == sorted(expected) and not set(skipped) - set(BACKBONE_PATHS) - set(expected) - {"attn_mask"}, (applied, skipped)
 
     for name, grids in cases.items():
         hidden, grads, outputs = _run(model, _inputs(model, grids))
@@ -153,7 +171,7 @@ def _check_flash_attention():
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
                        "compile_lm", "compile_vision"], applied
-    assert skipped == ["worker_prep", "compile_world_model"] and _implementations(model) == {"sdpa"}, skipped
+    assert skipped == ["worker_prep", "compile_world_model", "text_longest"] and _implementations(model) == {"sdpa"}, skipped
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
     print(f"ok flash-attention: kept at the exact level, SDPA at the all level ({', '.join(applied)})")
@@ -415,6 +433,174 @@ def test_compile_fallbacks():
           "a compiled head's dropout draws eager's masks")
 
 
+def test_other_backbones():
+    """Pieces for Qwen3.5, Gemma 4, MiniCPM-V and Florence-2 that need no weights: the compile paths of Florence-2 and
+    of remote-code MiniCPM-V; a layer structure that fails to compile is not tried again, another one still is;
+    hidden_only leaves interfaces that keep few logits (Gemma 4 soft-caps them) alone; the memoized
+    transformers.vision_utils helpers return the upstream values and honour precomputed tables."""
+    import torch
+
+    from starVLA.fast import compile as regional
+    from starVLA.fast import hidden_only, vision_pos
+
+    def tree(path):
+        root = torch.nn.Module()
+        node = root
+        names = path.split(".")
+        for name in names[:-1]:
+            child = torch.nn.Module()
+            setattr(node, name, child)
+            node = child
+        setattr(node, names[-1], torch.nn.ModuleList([torch.nn.Linear(2, 2)]))
+        return root
+
+    assert regional.apply_lm(tree("model.language_model.model.encoder.layers"))  # Florence-2
+    assert regional.apply_lm(tree("model.llm.model.layers"))  # MiniCPM-V, remote code
+    assert regional.apply_vision(tree("model.vision_tower.blocks"))  # Florence-2's DaViT
+    assert regional.apply_vision(tree("model.vpm.encoder.layers"))
+    assert regional.apply_vision(tree("model.model.vision_tower.encoder.layers"))  # Gemma 4, MiniCPM-V 4.6
+
+    class Linear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inner = torch.nn.Linear(2, 2)
+
+        def forward(self, x):
+            return self.inner(x)
+
+    class Full(Linear):
+        def __init__(self):
+            super().__init__()
+            self.inner = torch.nn.Identity()
+
+    attempts = []
+
+    def fake_compile(function, **kwargs):
+        def compiled(*args, **kw):
+            attempts.append(type(function.__self__.inner).__name__)
+            if isinstance(function.__self__.inner, torch.nn.Linear):
+                raise RuntimeError("cannot trace this kernel")
+            return function(*args, **kw)
+        return compiled
+
+    original_compile = torch.compile
+    torch.compile = fake_compile
+    try:
+        layers = [Linear(), Full(), Linear(), Full()]
+        calls = [regional._compiled_for_training(layer.forward, dynamic=True) for layer in layers]
+    finally:
+        torch.compile = original_compile
+    x = torch.ones(1, 2, requires_grad=True)
+    for layer, call in zip(layers, calls):
+        assert torch.equal(call(x), layer.forward(x))
+    assert attempts == ["Linear", "Identity", "Identity"], attempts  # the second linear-attention layer is not tried
+
+    class SoftCapped(torch.nn.Module):  # Gemma 4: logits_to_keep=1 and soft-capped logits
+        def __init__(self):
+            super().__init__()
+            self.lm_head = torch.nn.Linear(4, 3)
+
+        def forward(self, x, output_hidden_states=False, labels=None, return_dict=True, logits_to_keep=0):
+            logits = self.lm_head(x[:, -logits_to_keep:] if logits_to_keep else x)
+            return {"logits": torch.tanh(logits / 30.0) * 30.0, "hidden_states": (x,)}
+
+    vlm = torch.nn.Module()
+    vlm.model = SoftCapped()
+    assert hidden_only.apply(vlm)
+    x = torch.randn(2, 5, 4)
+    out = vlm.model(x, output_hidden_states=True, logits_to_keep=1)
+    assert isinstance(out, dict) and torch.equal(out["logits"], SoftCapped.forward(vlm.model, x, logits_to_keep=1)["logits"])
+
+    counted = []
+
+    def get_vision_position_ids(grid_thw, spatial_merge_size, include_temporal=False, kwargs=None):
+        if kwargs is not None and (position_ids := kwargs.pop("position_ids", None)) is not None:
+            return position_ids
+        counted.append(1)
+        return torch.arange(int(grid_thw.prod(-1).sum())) * spatial_merge_size
+
+    memo = vision_pos._memoized_helper(get_vision_position_ids)
+    grid = torch.tensor([[1, 4, 4], [1, 4, 4]])
+    first = memo(grid, 2, kwargs={})
+    again = memo(grid.clone(), 2, kwargs={})
+    assert torch.equal(first, get_vision_position_ids(grid, 2)) and again is first and len(counted) == 2
+    assert not torch.equal(memo(grid, 1), first)  # another argument: computed
+    given = {"position_ids": torch.zeros(3)}
+    assert torch.equal(memo(grid, 2, kwargs=given), torch.zeros(3)) and not given  # popped, as upstream does
+    assert torch.equal(memo(torch.tensor([[1, 2, 2]]), 2), get_vision_position_ids(torch.tensor([[1, 2, 2]]), 2))
+    from starVLA import fast
+
+    framework = torch.nn.Module()  # MiniCPM-RobotManip: the framework's own model holds the backbone as `vlm`
+    framework.model = torch.nn.Module()
+    framework.model.vlm = _tiny("qwen3")
+    os.environ["STARVLA_FAST"] = "hidden_only"
+    fast.accelerate_framework(framework)
+    assert getattr(framework.model.vlm, "_starvla_hidden_only", False)
+    interface = SimpleNamespace(model=_tiny("qwen3"))  # a backbone that went through get_vlm_model is not redone
+    fast.accelerate_backbone(interface)
+    framework.model.vlm = interface.model
+    calls = []
+    original_run = fast._run
+    fast._run = lambda hook, target: calls.append(hook) or ([], [])
+    try:
+        fast.accelerate_framework(framework)
+    finally:
+        fast._run = original_run
+    assert calls == ["framework"], calls
+    os.environ.pop("STARVLA_FAST")
+    print("ok other backbones: Florence-2 / MiniCPM-V compile paths, one failed compile per layer structure, "
+          "hidden_only with logits_to_keep, memoized vision_utils helpers, a framework's own backbone")
+
+
+def test_text_longest():
+    """text_longest on Wan's interface: the upstream _encode_text (called unbound on a stand-in with a tiny random
+    UMT5) and the fast one give the same tensor shape, zeros past every instruction, and the kept positions equal up
+    to rounding (bitwise here, in fp32 on the CPU); an interface with other text code is left alone."""
+    import types
+
+    import torch
+    from transformers import AutoTokenizer, UMT5Config, UMT5EncoderModel
+
+    from starVLA.fast import world_model
+    from starVLA.model.modules.world_model.Wan2 import _Wan2_Interface
+
+    model_dir = os.path.join(os.environ.get("ASSETS", ""), "models", "Qwen3-VL-4B-Instruct")
+    if not os.path.isdir(model_dir):
+        print("skip text_longest: no tokenizer under $ASSETS/models")
+        return
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)  # any right-padding tokenizer serves (Wan's is UMT5's)
+    tokenizer.padding_side = "right"
+    torch.manual_seed(0)
+    encoder = UMT5EncoderModel(UMT5Config(vocab_size=len(tokenizer), d_model=32, d_kv=8, d_ff=64,
+                                          num_layers=2, num_heads=4)).eval()
+    stand_in = types.SimpleNamespace(tokenizer=tokenizer, text_encoder=encoder)
+    instructions = ["pick up the black bowl", "open the top drawer of the cabinet and put the bowl inside it"]
+    upstream = _Wan2_Interface._encode_text(stand_in, instructions, max_length=64)
+
+    class Wan(_Wan2_Interface):
+        def __init__(self):
+            torch.nn.Module.__init__(self)
+            self.tokenizer, self.text_encoder = tokenizer, encoder
+
+    wan = Wan()
+    assert world_model.text_longest(wan)
+    fast = wan._encode_text(instructions, max_length=64)
+    assert fast.shape == upstream.shape and fast.dtype == upstream.dtype
+    lengths = tokenizer(instructions, return_attention_mask=True)["attention_mask"]
+    for row, mask in enumerate(lengths):
+        assert not fast[row, len(mask):].any()
+    assert torch.allclose(fast.float(), upstream.float(), atol=1e-2, rtol=0), (fast.float() - upstream.float()).abs().max()
+
+    class Other(torch.nn.Module):
+        tokenizer = text_encoder = None
+
+        def _encode_text(self, instructions, max_length=512):
+            return None
+
+    assert not world_model.text_longest(Other())
+    print(f"ok text_longest: same shape and zeros, largest difference {(fast.float() - upstream.float()).abs().max():.1e}")
+
+
 def test_adamw_compiled():
     """The written-out AdamW update follows torch.optim.AdamW to rounding over several steps (eager here; on the GPU it
     is compiled), and the path does not apply to anything but a fused torch AdamW."""
@@ -501,6 +687,16 @@ def test_qwen3_vl_bitwise():
     _in_subprocess("qwen3")
 
 
+def test_qwen3_5_bitwise():
+    """Qwen3.5 needs transformers 5 (run with that environment); skipped on upstream's pinned 4.57."""
+    try:
+        import transformers.models.qwen3_5  # noqa: F401
+    except ImportError:
+        print("skipped qwen3_5: this transformers has no Qwen3.5")
+        return
+    _check("qwen3_5")
+
+
 def test_qwen2_5_vl_bitwise():
     _in_subprocess("qwen2_5")
 
@@ -531,9 +727,12 @@ if __name__ == "__main__":
         print("ok selection")
         test_qwen3_vl_bitwise()
         test_qwen2_5_vl_bitwise()
+        test_qwen3_5_bitwise()
         test_flash_attention_backbone()
         test_condition_once()
         test_cast_while_flattening()
         test_compile_fallbacks()
         test_adamw_compiled()
+        test_other_backbones()
+        test_text_longest()
         test_worker_prep()
