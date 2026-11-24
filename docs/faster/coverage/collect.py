@@ -23,12 +23,13 @@ SESSIONS = {
     "72693": {"session": 5, "node": "C", "when": "24 Nov", "note": "TF32 for the fp32 action heads"},
     "72750": {"session": 6, "node": "C", "when": "24 Nov", "note": "the other Qwen frameworks, sdpa path, judge with TF32"},
     "72753": {"session": 7, "node": "C", "when": "24 Nov", "note": "condition_once, unused_views, PI0 / PI05"},
-    "72867": {"session": 9, "node": None, "when": "24 Nov", "note": "PI0 / PI05 with worker_examples; openpi_sdpa on and off alternating"},
+    "72867": {"session": 9, "node": None, "when": "24 Nov", "note": "PI0 / PI05 with worker_examples and openpi_compile; all and max alternating"},
+    "72879": {"session": 10, "node": None, "when": "24 Nov", "note": "statistical gate on QwenPI; judge on the released commit"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
 }
 OTHERS = WS / "runs/others"  # session 4
 TF32 = WS / "runs/others_tf32"  # session 5
-ROOTS = {4: OTHERS, 5: TF32, 6: WS / "runs/r13", 7: WS / "runs/r14", 8: WS / "runs/r15", 9: WS / "runs/r16"}
+ROOTS = {4: OTHERS, 5: TF32, 6: WS / "runs/r13", 7: WS / "runs/r14", 8: WS / "runs/r15", 9: WS / "runs/r16", 10: WS / "runs/r17"}
 TAGS = ("ref", "exact", "all", "all_tf32")
 Q3, Q25, SDPA, FA2 = "Qwen3-VL-4B", "Qwen2.5-VL-3B", "sdpa", "flash_attention_2"
 COMBO_INFO = {  # run directory -> framework, backbone, attention the config asks for
@@ -92,6 +93,8 @@ judges = [j for j in (
     judge("all + tf32", ROOTS[6] / "judge_all_tf32/check.json", "72750", "STARVLA_FAST=all,tf32, commit 8332201"),
     judge("final tree, exact", ROOTS[8] / "judge_exact/check.json", "72818", "STARVLA_FAST=exact, commit e5f7e15"),
     judge("final tree, all", ROOTS[8] / "final_all/check.json", "72818", "STARVLA_FAST=all, commit e5f7e15, three-process check"),
+    judge("released commit, all", WS / "runs/r17/judge_all/check.json", "72879", "STARVLA_FAST=all, against the frozen timing"),
+    judge("released commit, exact", WS / "runs/r17/judge_exact/check.json", "72879", "STARVLA_FAST=exact"),
 ) if j]
 by_name = {j["name"]: j for j in judges}
 
@@ -144,6 +147,8 @@ def session_rows(session):
     out = []
     for combo, (framework, backbone, attention) in COMBO_INFO.items():
         cells = {tag: timing(combo, (f"{tag}_summary.json",), ROOTS[session]) for tag in TAGS}
+        if not cells["all_tf32"]:  # the precision level: `max`, which is `all,tf32` on the Qwen frameworks
+            cells["all_tf32"] = timing(combo, ("max_summary.json",), ROOTS[session])
         if any(cells.values()):
             out.append({"framework": framework, "backbone": backbone, "attention": attention, "combo": combo,
                         "session": session, **cells})
@@ -154,10 +159,16 @@ by_session = {session: session_rows(session) for session in ROOTS}
 latest = {}  # per combination, the row of the latest session that measured a baseline and a candidate
 for session in sorted(ROOTS):
     for row in by_session[session]:
+        if session == 8 and row["combo"] in ("pi0", "pi05"):
+            continue  # `all` of that tree had openpi_sdpa (now level max) and no openpi_compile, and worker_examples did not apply
         if (row["ref"] or {}).get("step_ms") and any((row[tag] or {}).get("step_ms") for tag in TAGS[1:]):
             latest[row["combo"]] = row
 coverage = [latest[combo] for combo in COMBO_INFO if combo in latest]
 rows4, rows5 = by_session[4], by_session[5]
+# session 9: PI0 / PI05, the levels all and max alternating in one job
+pi_alternating = {combo: {tag: cell for tag in ("ref", "exact", "all", "max", "all2", "max2")
+                          if (cell := timing(combo, (f"{tag}_summary.json",), ROOTS[9]))} for combo in ("pi0", "pi05")}
+stat_gate = {p.parent.name: load(p) for p in sorted((WS / "runs/r17").glob("stat_*/summary.json"))}
 # session 8: the headline recipe on the final tree and on the tree of session 4, alternating in one job
 alternating = {tag: timing("oft_q3", (f"{tag}_summary.json",), ROOTS[8])
                for tag in ("ref", "exact", "all", "all_old", "all2", "all_old2", "all_tf32", "ref2")}
@@ -165,7 +176,7 @@ alternating = {tag: cell for tag, cell in alternating.items() if cell}
 
 # ---- rounding-level paths: distance of one training step from the default step
 distances = []
-for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance")):
+for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "distance")):
     for p in sorted((ROOTS[session] / folder).glob("*.json")):
         d = load(p)
         if d and ("default_vs_fast" in d or "flash_vs_sdpa" in d):
@@ -200,7 +211,8 @@ for stem, (session, p) in sorted({**{q.stem: (3, q) for q in suite.glob("*.json"
 out = {"sessions": {v["session"]: {k: v[k] for k in ("node", "when", "note")} | {"job": job} for job, v in SESSIONS.items()},
        "headline_by_session": sessions, "judge": judges, "coverage": coverage,
        "timing_by_session": {str(k): v for k, v in by_session.items()}, "rounding_distance": distances,
-       "headline_alternating_session_8": alternating,
+       "headline_alternating_session_8": alternating, "openpi_alternating_session_9": pi_alternating,
+       "statistical_gate_other_frameworks": stat_gate,
        "timing_session_4": rows4, "timing_session_5_tf32": rows5, "timing_session_2": rows,
        "reruns_final_tree_session_3": reruns, "bitwise_suite": suite.name, "bitwise": bitwise,
        "libero": load(WS.parent.parent / "libero/runs/e2e_unified/summary_e2e.json"),

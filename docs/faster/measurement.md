@@ -131,8 +131,8 @@ package, `starVLA/fast/`, behind one setting:
 | `STARVLA_FAST` | Fast paths |
 |---|---|
 | `exact` | `attn_mask`, `hidden_only`, `vision_attn`, `vision_pos`, `worker_prep`, `worker_examples`, `grad_norm`, `allreduce` |
-| `all` | `exact` + `sdpa`, `vision_attn_relaxed`, `compile_lm`, `compile_vision`, `condition_once`, `unused_views`, `openpi_sdpa` |
-| `all,tf32` | `all` + TF32 for fp32 matrix products (a precision setting; by name only) |
+| `all` | `exact` + `sdpa`, `vision_attn_relaxed`, `compile_lm`, `compile_vision`, `condition_once`, `unused_views`, `openpi_compile`: the same operations at the same precision, in another order or from another kernel |
+| `max` | `all` + `tf32`, `openpi_sdpa`: the precision of an operation changes (on the Qwen frameworks `max` is `all,tf32`) |
 | `exact,-worker_prep,compile_lm` | a level and/or names; `-name` removes one |
 | unset, `off`, `0` | none: the baseline code paths |
 
@@ -204,7 +204,7 @@ framework settings of their own configs (`docs/faster/coverage/configs/`), PI0 a
 the converted base checkpoints. Each row is the latest session that measured that combination, with the baseline of
 the same job:
 
-| Framework | Backbone | Attention in the recipe | Baseline (ms/step) | `exact` | `all` | `all,tf32` | `exact` checked bit for bit | Session | Peak GiB: baseline / exact / all |
+| Framework | Backbone | Attention in the recipe | Baseline (ms/step) | `exact` | `all` | `max` | `exact` checked bit for bit | Session | Peak GiB: baseline / exact / all |
 |---|---|---|---:|---:|---:|---:|---|:---:|---|
 | QwenOFT | Qwen3-VL-4B | SDPA | 801.8 | 492.9 (1.63×) | 420.8 (1.91×) | 415.0 (1.93×) | judge: 23,336 tensors; 728 gradients + actions ✓ | 8 | 66.5 / 66.2 / 59.0 |
 | QwenGR00T | Qwen3-VL-4B | SDPA | 905.0 | 603.5 (1.50×) | 498.2 (1.82×) | 500.4 (1.81×) | 960 gradients + actions ✓ | 7 | 73.0 / 72.5 / 62.3 |
@@ -212,27 +212,29 @@ the same job:
 | QwenPI_v3 | Qwen3-VL-4B | SDPA | 1679.6 | 1430.6 (1.17×) | 1012.3 (1.66×) | 702.3 (2.39×) | 1,376 gradients + actions ✓ | 8 | 122.6 / 122.3 / 102.7 |
 | QwenDiscreteDiffusion | Qwen3-VL-4B | SDPA | 2507.8 | 2295.9 (1.09×) | 2062.1 (1.22×) | 739.4 (3.39×) | 1,220 gradients + actions ✓ | 8 | 143.1 / 142.7 / 132.1 |
 | QwenAdapter | Qwen3-VL-4B | SDPA | 999.2 | 767.8 (1.30×) | 668.4 (1.49×) | — | 1,226 gradients + actions ✓ | 6 | 88.2 / 87.8 / 78.3 |
-| LangForce | Qwen3-VL-4B | SDPA | 1414.9 | 894.8 (1.58×) | 719.2 (1.97×) | 720.9 (1.96×) | 961 gradients + actions ✓ | 6 | 104.4 / 103.6 / 86.3 |
-| QwenDual | Qwen3-VL-4B | SDPA | 1308.0 | 966.7 (1.35×) | 680.6 (1.92×) | — | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ | 8 | 87.9 / 87.5 / 68.2 |
+| LangForce | Qwen3-VL-4B | SDPA | 1577.5 | 955.9 (1.65×) | 780.8 (2.02×) | 774.9 (2.04×) | 961 gradients + actions ✓ | 8 | 104.4 / 103.6 / 86.3 |
+| QwenDual | Qwen3-VL-4B | SDPA | 1308.0 | 966.7 (1.35×) | 680.6 (1.92×) | 665.0 (1.97×) | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ | 8 | 87.9 / 87.5 / 68.2 |
 | QwenOFT | Qwen2.5-VL-3B | SDPA | 1176.3 | 573.5 (2.05×) | 466.1 (2.52×) | — | 840 gradients + actions ✓ | 4 | 64.1 / 63.6 / 55.3 |
 | QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ | 6 | 63.2 / 63.2 / 55.3 |
-| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 960.9 | 754.5 (1.27×) | 569.1 (1.69×) | 554.7 (1.73×) | 1,072 gradients + actions ✓ | 6 | 70.6 / 70.6 / 62.6 |
-| PI0 | PaliGemma (openpi) | eager | 639.6 | 644.0 (0.99×) | 483.2 (1.32×) | 483.8 (1.32×) | — | 8 | 102.5 / 102.5 / 67.8 |
-| PI05 | PaliGemma (openpi) | eager | 667.2 | 664.7 (1.00×) | 551.0 (1.21×) | 549.4 (1.21×) | — | 8 | 113.2 / 113.2 / 75.9 |
+| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 956.3 | 755.6 (1.27×) | 554.7 (1.72×) | 546.9 (1.75×) | 1,072 gradients + actions ✓ | 8 | 70.6 / 70.6 / 59.9 |
+| PI0 | PaliGemma (openpi) | eager | 636.9 | 591.8 (1.08×) | 453.6 (1.40×) | 443.3 (1.44×) | — | 9 | 102.5 / 102.5 / 63.0 |
+| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | — | — | — | 9 | 113.2 / 113.2 / — |
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
+**Still running as of this commit:** PI05 with `all` and `max`; the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
+
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](#other-frameworks-and-backbones-step-time)).
 
-`exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.58×) and little on PI0 / PI05 (0.99×), whose step is the PaliGemma forward and backward itself.
+`exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.65×) and little on PI0 / PI05 (1.08×), whose step is the PaliGemma forward and backward itself.
 
-The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `all,tf32` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 976 → 664 ms; QwenPI_v3 1012 → 702 ms). TF32 is a precision setting rather than a reordering, so it is selected by name. The judge accepts `STARVLA_FAST=all,tf32` on the headline recipe as statistically equivalent, and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](#tf32)).
+The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 976 → 664 ms; QwenPI_v3 1012 → 702 ms; QwenDual 681 → 665 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent, and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](#tf32)).
 
 The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms.
 
 On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the four full-attention vision layers (32 images × 256 patches, head dimension 80), so `exact` batches only the 28 window-attention layers; `all` batches both.
 
-PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_sdpa`.
+PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_compile`; `max` adds `openpi_sdpa`. The whole model already runs in bf16, so TF32 changes nothing there.
 
 Sessions 4 to 8 are five batch jobs on one node (2 GPUs and 32 cores each). The baseline is not constant across
 them: the same recipe, code and command line gave, for example, QwenGR00T + Qwen3-VL-4B at 1001, 998, 905 ms in sessions 4, 5, 7; QwenPI + Qwen3-VL-4B at 1445, 1356, 1292 ms in sessions 4, 5, 7; QwenOFT + Qwen3-VL-4B at 904, 913, 802 ms in sessions 4, 6, 8. Every combination measured in
@@ -243,22 +245,23 @@ The headline recipe with `all` ran at 425 ms in session 4 and at 464 ms in sessi
 ### TF32
 
 The action heads of the flow-matching frameworks run in fp32, and PyTorch's default keeps fp32 matrix products at
-full precision. `STARVLA_FAST=all,tf32` sets `torch.backends.cuda.matmul.allow_tf32` (and the cuDNN equivalent)
-after the framework is built. The judge on the headline recipe: PASS, tier N2: 3,233 of 23,336 tensors bitwise identical, seven endpoints within 1.41σ of upstream's seed-to-seed spread, 446.4 ms against the frozen 906.9 ms (session 6). Training loss of the timed runs: mean
+full precision. `tf32` (level `max`, or `STARVLA_FAST=all,tf32`) sets `torch.backends.cuda.matmul.allow_tf32` and the
+cuDNN equivalent after the framework is built. In the judge's terms this is tier N2, a change of precision, which
+its rules allow if the statistical gate passes. The judge on the headline recipe: PASS, tier N2: 3,233 of 23,336 tensors bitwise identical, seven endpoints within 1.41σ of upstream's seed-to-seed spread, 446.4 ms against the frozen 906.9 ms (session 6). Training loss of the timed runs: mean
 ± standard error over steps 100 to 220 on rank 0. Runs do not draw the same batches, so the columns of a row differ
 by chance as well; `exact` is bitwise identical to the baseline and shows how much:
 
-| Framework | Backbone | Session | Baseline | `exact` | `all` | `all,tf32` |
+| Framework | Backbone | Session | Baseline | `exact` | `all` | `max` |
 |---|---|:---:|---:|---:|---:|---:|
 | QwenOFT | Qwen3-VL-4B | 8 | 0.2558 ± 0.0018 | 0.2568 ± 0.0018 | 0.2532 ± 0.0018 | 0.2539 ± 0.0018 |
 | QwenGR00T | Qwen3-VL-4B | 7 | 0.9662 ± 0.01 | 0.982 ± 0.0094 | 0.9919 ± 0.0089 | 0.9793 ± 0.0098 |
 | QwenPI | Qwen3-VL-4B | 7 | 510.7 ± 32 | 528.2 ± 36 | 550.1 ± 36 | 508.2 ± 33 |
 | QwenPI_v3 | Qwen3-VL-4B | 8 | 0.5745 ± 0.0071 | 0.5764 ± 0.007 | 0.5747 ± 0.0069 | 0.5727 ± 0.0069 |
 | QwenDiscreteDiffusion | Qwen3-VL-4B | 8 | 4.458 ± 0.015 | 4.458 ± 0.015 | 4.479 ± 0.015 | 4.461 ± 0.015 |
-| LangForce | Qwen3-VL-4B | 6 | 0.6401 ± 0.02 | 0.6435 ± 0.019 | 0.6512 ± 0.019 | 0.6508 ± 0.02 |
-| QwenGR00T | Qwen2.5-VL-3B | 6 | 0.7987 ± 0.017 | 0.7753 ± 0.018 | 0.8057 ± 0.017 | 0.783 ± 0.017 |
-| PI0 | PaliGemma (openpi) | 8 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.008898 ± 0.00043 | 0.008898 ± 0.00043 |
-| PI05 | PaliGemma (openpi) | 8 | 0.07843 ± 0.0012 | 0.07843 ± 0.0012 | 0.07841 ± 0.0012 | 0.07841 ± 0.0012 |
+| LangForce | Qwen3-VL-4B | 8 | 0.6505 ± 0.019 | 0.6304 ± 0.02 | 0.6443 ± 0.019 | 0.6224 ± 0.019 |
+| QwenDual | Qwen3-VL-4B | 8 | 1.003 ± 0.0085 | 0.9847 ± 0.0095 | 1.005 ± 0.0076 | 0.9589 ± 0.0095 |
+| QwenGR00T | Qwen2.5-VL-3B | 8 | 0.8066 ± 0.018 | 0.8082 ± 0.018 | 0.8021 ± 0.018 | 0.8043 ± 0.018 |
+| PI0 | PaliGemma (openpi) | 9 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.008889 ± 0.00043 | 0.0089 ± 0.00043 |
 
 ### How far a rounding-level path moves one training step
 
@@ -288,7 +291,7 @@ the default code agree exactly (the noise floor is zero), so every number below 
 
 - **One bf16 training step is far more sensitive to rounding than the loss is.** Compiling the decoder layers, which the judge accepts on the headline recipe, moves the language model's gradient by 28% (QwenOFT) and 22% (QwenGR00T), and the loss of that step by 1% and 0.0007%.
 - **The vision tower's one-step gradient is mostly rounding noise.** It is what remains after backpropagation through the whole language model and 32 vision layers in bf16. Compiling the vision blocks leaves it with cosine 0.84 (QwenOFT) and -0.04 (QwenGR00T) to the default one; switching the same backbone from SDPA to eager attention, a change that is not ours and computes the same function, gives 0.55 and -0.09.
-- **`sdpa` is in the same range**: language model 5.1% and 15%, vision tower cosine 0.29 and 0.24. The low cosine of all gradients together on QwenGR00T is the vision tower, whose gradient is the largest part of the total there. The judge is frozen on the headline recipe and cannot be run on the flash-attention recipes; the mean loss of their timed runs (steps 100 to 220) was QwenOFT, session 6: 0.2567 (baseline), 0.2569 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.2571 (`all`); QwenGR00T, session 6: 0.7987 (baseline), 0.7753 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.8057 (`all`).
+- **`sdpa` is in the same range**: language model 5.1% and 15%, vision tower cosine 0.29 and 0.24. The low cosine of all gradients together on QwenGR00T is the vision tower, whose gradient is the largest part of the total there. The judge is frozen on the headline recipe and cannot be run on the flash-attention recipes; the mean loss of their timed runs (steps 100 to 220) was QwenOFT, session 6: 0.2567 (baseline), 0.2569 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.2571 (`all`); QwenGR00T, session 6: 0.7987 (baseline), 0.7753 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.8057 (`all`); QwenGR00T, session 8: 0.8066 (baseline), 0.8082 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.8021 (`all`).
 - **`condition_once` does not change the loss at all** and moves gradients by 0.5% to 2.3%: only the order in which the copies' gradients are summed differs.
 - **`vision_attn_relaxed` is bitwise identical in this check**, because deterministic mode uses the unfused SDPA kernel, for which one batched call equals the per-image calls. The last-bit difference it is named for appears with the fused kernels that training uses (see the probe below).
 - **The PI0 / PI05 paths**: `openpi_sdpa` moves the gradients by 7.2% and 5.9%, `unused_views` by 3.0% and 2.5%; these checks load the converted base checkpoints, so every module has trained weights.

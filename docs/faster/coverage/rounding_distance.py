@@ -65,11 +65,7 @@ def step():
     with torch.autocast('cuda', dtype=torch.bfloat16):  # as the trainer calls it
         loss = model(examples)['action_loss']
     loss.backward()
-    grads = {}
-    for name, p in model.named_parameters():
-        if p.grad is not None:
-            grads.setdefault(group(name), []).append(p.grad.detach().float().flatten())
-    return float(loss), {key: torch.cat(parts) for key, parts in grads.items()}
+    return float(loss), {name: p.grad.detach().float().flatten() for name, p in model.named_parameters() if p.grad is not None}
 
 
 def sums(a, b):
@@ -87,11 +83,22 @@ def report(total):
 
 
 def distance(a, b):
-    parts = {key: sums(a[1][key], b[1][key]) for key in a[1]}
+    """A parameter with a gradient in only one of the two steps counts as zero in the other and is listed: compiled
+    code returns zeros for a parameter whose output the loss does not use, where eager autograd returns None."""
+    parts, one_sided = {}, []
+    for name in sorted(set(a[1]) | set(b[1])):
+        x, y = a[1].get(name), b[1].get(name)
+        if x is None or y is None:
+            present = x if x is not None else y
+            one_sided.append({'name': name, 'in': 'default' if y is None else 'fast', 'all_zero': not bool(present.any())})
+            x, y = (present, torch.zeros_like(present)) if y is None else (torch.zeros_like(present), present)
+        parts[group(name)] = parts.get(group(name), 0) + sums(x, y)
     whole = report(sum(parts.values()))
     return {'loss': [a[0], b[0]], 'loss_relative_difference': abs(a[0] - b[0]) / abs(a[0]),
             'gradient_relative_difference': whole['relative_difference'], 'gradient_cosine': whole['cosine'],
-            'by_module': {key: report(value) for key, value in parts.items()}}
+            'by_module': {key: report(value) for key, value in parts.items()},
+            'gradient_in_one_step_only': {'parameters': len(one_sided), 'all_zero': all(e['all_zero'] for e in one_sided),
+                                          'examples': one_sided[:6]}}
 
 
 default_a = step()
@@ -111,7 +118,7 @@ else:
         applied, skipped = applied + more[0], skipped + more[1]
 res = {'framework': framework, 'backbone': os.path.basename(model_dir.rstrip('/')), 'loaded_with': attn,
        'paths': paths, 'applied': applied, 'not_applicable': skipped,
-       'gradient_elements': {key: int(value.numel()) for key, value in default_a[1].items()},
+       'gradient_elements': sum(int(value.numel()) for value in default_a[1].values()),
        'default_vs_default': noise_floor, 'default_vs_fast': distance(default_a, step())}
 open(out, 'w').write(json.dumps(res, indent=1) + '\n')
 print(json.dumps(res))

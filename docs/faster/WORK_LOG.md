@@ -232,3 +232,24 @@ jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measure
 - Found on the way: my first distance script concatenated all gradients on the GPU and cast them to fp64, which does
   not fit for 3.9 billion elements; it now accumulates the dot products in chunks. It also ran the step without the
   trainer's bf16 autocast, which PI05 needs. The session 8 numbers are from the corrected script.
+- Session 8, final tree of that morning (`e5f7e15`), everything in one job. Judge: `exact` 23,336 of 23,336 tensors,
+  PASS N0 (490.5 ms); the three-process check of `all` INVALID again (its own references 806 / 816 ms, outside the
+  frozen band; candidate 413.5 ms, 1.96x). Headline recipe, this tree and the session 4 tree alternating: 420.8 /
+  414.6 ms against 426.2 / 427.1 ms, baseline 801.8 ms before and 807.0 ms after: the 464 ms of session 6 was the
+  job, not the code. With `condition_once`: QwenPI_v3 1679.6 -> 1430.6 -> 1012.3 ms (`all`, 1.66x; 1.22x before) ->
+  702.3 with TF32; QwenDual 1308.0 -> 966.7 -> 680.6 (1.92x; 1.42x before) -> 665.0; LangForce 1577.5 -> 955.9 -> 780.8
+  (2.02x); QwenGR00T + Qwen2.5-VL flash-attention 956.3 -> 755.6 -> 554.7 (1.72x). QwenDiscreteDiffusion, first valid
+  measurement: 2507.8 -> 2295.9 (1.09x) -> 2062.1 (1.22x) -> 739.4 ms with TF32 (3.39x).
+- Found on the way: `worker_examples` passed its CPU test and then reported "not applicable" in training. The trainer
+  wraps the config in an access-tracking object, and the stand-in for the workers kept only plain OmegaConf values.
+  It now unwraps that object; the test builds PI0 / PI05 on a wrapped config, as the trainer does. Session 9: PI0
+  636.9 -> 591.8 ms with `exact` (1.08x; 0.99x in session 8).
+- Levels follow the judge's tiers: `exact` is N0, `all` adds N1 (another order or kernel, compilation), and a third
+  level `max` adds N2, a change of precision: `tf32`, and `openpi_sdpa`, whose softmax runs in bf16 instead of fp32
+  and which had been in `all` for one morning. On the Qwen frameworks `max` is what was measured as `all,tf32`.
+- `openpi_compile` (level `all`): the SigLIP layers and the framework's joint layer function compiled for training
+  calls. Dynamo traces each as one graph without breaks. Session 9: PI0 `all` 453.6 ms (1.40x; 1.27x in session 7
+  with `unused_views` alone); the first step takes 7 min to compile. The first distance check of it failed in my
+  script: compiled code returns zeros for parameters the loss does not use (the prefix stream's last MLP), eager
+  autograd returns None, and the script compared concatenated vectors. DeepSpeed sets None gradients to zero
+  itself, so training is the same; the script now compares by parameter name.
