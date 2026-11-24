@@ -1,0 +1,194 @@
+{
+ "tree": "$WORK/starvla/ws/starVLA_r13",
+ "switches": {
+  "STARVLA_FAST": "all,tf32"
+ },
+ "evaluator_sha256": "868f97722fd37ab3fb2b34a8347147bf4214028f5bf084e73425065a78b68a95",
+ "tree_digest": "74988791418136d7895c8a7003bfe356a9d19859a0d4c3ed34d5c1c5373bb096",
+ "mode": "check",
+ "gates": {
+  "structure": {
+   "status": "PASS",
+   "samples": 96,
+   "batches": 4
+  },
+  "benefit": {
+   "notes": {
+    "window_ratio": 1.0613436712931785,
+    "frozen_window_ratio": 1.0120227773308592
+   },
+   "candidate_step_ms": 446.41860973468283,
+   "candidate_windows": [
+    459.70361253945157,
+    433.1336069299141
+   ],
+   "reference_ms": 906.864908257412,
+   "speedup": 2.031422724057994,
+   "threshold": 1.02,
+   "spread": 0.00688839291082238,
+   "peak_mem_gib": 58.96524906158447,
+   "gpu_util": 44.8,
+   "status": "PASS"
+  },
+  "bitwise": {
+   "checked": 23336,
+   "bitwise_identical": 3233,
+   "exact_failures": [],
+   "errors": [],
+   "precision_mode_changes": [
+    {
+     "where": "eval r0 s0",
+     "changed": {
+      "float32_matmul_precision": [
+       "highest",
+       "high"
+      ],
+      "matmul.allow_tf32": [
+       false,
+       true
+      ]
+     }
+    },
+    {
+     "where": "eval r0 s1",
+     "changed": {
+      "float32_matmul_precision": [
+       "highest",
+       "high"
+      ],
+      "matmul.allow_tf32": [
+       false,
+       true
+      ]
+     }
+    },
+    {
+     "where": "eval r1 s0",
+     "changed": {
+      "float32_matmul_precision": [
+       "highest",
+       "high"
+      ],
+      "matmul.allow_tf32": [
+       false,
+       true
+      ]
+     }
+    },
+    {
+     "where": "eval r1 s1",
+     "changed": {
+      "float32_matmul_precision": [
+       "highest",
+       "high"
+      ],
+      "matmul.allow_tf32": [
+       false,
+       true
+      ]
+     }
+    },
+    {
+     "where": "step2 r0 s0",
+     "changed": {
+      "float32_matmul_precision": [
+       "highest",
+       "high"
+      ],
+      "matmul.allow_tf32": [
+       false,
+       true
+      ]
+     }
+    }
+   ],
+   "dtype_changes": [],
+   "status": "NOT_BITWISE"
+  },
+  "statistical": {
+   "status": "PASS",
+   "verdict": "equivalent",
+   "endpoints": {
+    "loss_20_40": {
+     "state": "within",
+     "mean": 0.021507476270198833,
+     "sigma_seed": 0.05932733328982465,
+     "bound": 0.17798199986947397,
+     "mean_in_sigma": 0.36252221493136993,
+     "diffs": [
+      0.021507476270198833
+     ]
+    },
+    "loss_40_60": {
+     "state": "within",
+     "mean": 0.005740649998188019,
+     "sigma_seed": 0.01151536096642914,
+     "bound": 0.03454608289928742,
+     "mean_in_sigma": 0.4985210637272943,
+     "diffs": [
+      0.005740649998188019
+     ]
+    },
+    "probe_50_60": {
+     "state": "within",
+     "mean": -0.013084014505147956,
+     "sigma_seed": 0.00925751109335375,
+     "bound": 0.027772533280061247,
+     "mean_in_sigma": -1.4133404079354948,
+     "diffs": [
+      -0.013084014505147956
+     ]
+    },
+    "upd_10_60": {
+     "state": "within",
+     "mean": 5.870993163625779e-08,
+     "sigma_seed": 2.328927857967019e-07,
+     "bound": 6.986783573901057e-07,
+     "mean_in_sigma": 0.25208995390482897,
+     "diffs": [
+      5.870993163625779e-08
+     ]
+    },
+    "updvlm_10_60": {
+     "state": "within",
+     "mean": -3.243945521092007e-09,
+     "sigma_seed": 1.286546419623178e-07,
+     "bound": 3.859639258869534e-07,
+     "mean_in_sigma": -0.025214368262298226,
+     "diffs": [
+      -3.243945521092007e-09
+     ]
+    },
+    "updq_1_6": {
+     "state": "within",
+     "mean": 1.2190866982550778e-09,
+     "sigma_seed": 3.646044504974645e-08,
+     "bound": 1.0938133514923936e-07,
+     "mean_in_sigma": 0.03343586992950201,
+     "diffs": [
+      1.2190866982550778e-09
+     ]
+    },
+    "updvlmq_1_6": {
+     "state": "within",
+     "mean": -3.262312020524151e-09,
+     "sigma_seed": 3.8761605897565975e-09,
+     "bound": 1.1628481769269792e-08,
+     "mean_in_sigma": -0.8416348974666725,
+     "diffs": [
+      -3.262312020524151e-09
+     ]
+    }
+   }
+  }
+ },
+ "started": "2026-11-24T02:48:57.009814",
+ "performance": {
+  "speedup": 2.031422724057994,
+  "reference_step_ms": 906.864908257412,
+  "candidate_step_ms": 446.41860973468283
+ },
+ "status": "PASS",
+ "finished": "2026-11-24T03:29:28.711962",
+ "tier": "N2"
+}

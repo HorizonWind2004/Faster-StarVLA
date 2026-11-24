@@ -23,6 +23,7 @@ ap.add_argument('--tag', required=True)
 ap.add_argument('--fast', default='')
 ap.add_argument('--model')
 ap.add_argument('--set', nargs='*', default=[])
+ap.add_argument('--cprofile', type=int, default=0, help='cProfile of rank 0 over this many steps, with CUDA_LAUNCH_BLOCKING=1')
 a = ap.parse_args()
 a.out = a.out if a.out.startswith('/') else str(WS / a.out)  # the training process runs in the tree
 
@@ -50,7 +51,8 @@ if a.model:
     bench.CFG['assets'] = dict(bench.CFG['assets'], model=a.model)
 switches = {'STARVLA_FAST': a.fast} if a.fast else {}
 with bench.GpuLock():
-    res = bench.timing_run(a.tree if a.tree.startswith('/') else str(WS / a.tree), switches, a.out, a.tag)
+    res = bench.timing_run(a.tree if a.tree.startswith('/') else str(WS / a.tree), switches, a.out, a.tag,
+                           **({'cprofile': a.cprofile, 'extra_env': {'CUDA_LAUNCH_BLOCKING': '1'}} if a.cprofile else {}))
 res['train_overrides'] = a.set
 res['fast'] = a.fast
 Path(a.out, f'{a.tag}_summary.json').write_text(json.dumps(res, indent=1) + '\n')

@@ -17,7 +17,7 @@ Qwen3-VL-4B, per-GPU batch 16, all 4.50 B parameters trainable. At the `exact` l
 deterministic mode are **bitwise identical** to the baseline. [Setup and measurement details](docs/faster/measurement.md);
 [other frameworks and backbones](#other-frameworks-and-backbones).
 
-These figures are from the session in which the baseline timing was frozen. In two later sessions the baseline itself ran faster (796 and 816 ms instead of 905 ms), and the same comparison gave 1.87× and 1.94× for `all` and 1.56× and 1.63× for `exact` ([sessions](docs/faster/measurement.md#the-judge-on-the-unified-code)).
+These figures are from the session in which the baseline timing was frozen. In three later sessions the baseline itself ran faster (796 to 816 ms instead of 905 ms), and the same comparison gave 1.87× to 1.96× for `all` and 1.56× to 1.65× for `exact` ([sessions](docs/faster/measurement.md#the-judge-on-the-unified-code)).
 
 ## Quick Start
 
@@ -65,55 +65,76 @@ rounds that did not help.
 
 ![Optimization map: input pipeline, vision tower, language model, DeepSpeed ZeRO-2](docs/faster/figures/module-map.svg)
 
-All of it lives in one package, [`starVLA/fast/`](starVLA/fast/__init__.py), called from three places that belong to no
-framework: where a backbone is built (`get_vlm_model`), where the trainer gets its DeepSpeed engine, and where the
-data loader is built. The backbone interfaces contain no switch, and a framework's only contact is one line that
-accepts the inputs the data-loader workers prepared.
+All of it lives in one package, [`starVLA/fast/`](starVLA/fast/__init__.py), called from four places that belong to no
+framework: where a backbone is built (`get_vlm_model`), where a framework is built (`build_framework`), where the
+trainer gets its DeepSpeed engine, and where the data loader is built. No framework and no backbone interface
+contains a switch or a line of it.
 
 See [why each change helps and what each one measured](docs/faster/measurement.md#what-changed-in-detail).
 
 ## Other frameworks and backbones
 
 starVLA is a framework of many policies and backbones. The headline numbers are from one recipe (QwenOFT on
-Qwen3-VL-4B). The same setting on other combinations, same hardware, data and batch size:
+Qwen3-VL-4B). The same setting on the other frameworks, same hardware, data and batch size, each row against the
+baseline of the same job:
 
-| Framework | Backbone | Attention | Baseline (ms/step) | `exact` | `all` | `exact` checked bit for bit |
-|---|---|---|---:|---:|---:|---|
-| QwenOFT | Qwen3-VL-4B | SDPA | 795.5 | 510.1 (1.56×) | 425.3 (1.87×) | judge: 23,336 tensors; 728 gradients + actions ✓ |
-| QwenGR00T | Qwen3-VL-4B | SDPA | 903.0 | 783.9 (1.15×) | 722.9 (1.25×) | 960 gradients + actions ✓ |
-| QwenPI | Qwen3-VL-4B | SDPA | 1291.9 | 1177.4 (1.10×) | 1133.3 (1.14×) | 1,225 gradients + actions ✓ |
-| QwenOFT | Qwen2.5-VL-3B | SDPA | 1021.7 | 694.1 (1.47×) | 554.4 (1.84×) | 840 gradients + actions ✓ |
-| QwenOFT | Qwen2.5-VL-3B | flash-attention | 775.0 | 738.7 (1.05×) | same as `exact` | 840 gradients + actions ✓ |
-| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 857.0 | 830.0 (1.03×) | same as `exact` | 1,072 gradients + actions ✓ |
+| Framework | Backbone | Attention in the recipe | Baseline (ms/step) | `exact` | `all` | `all,tf32` | `exact` checked bit for bit |
+|---|---|---|---:|---:|---:|---:|---|
+| QwenOFT | Qwen3-VL-4B | SDPA | 801.8 | 492.9 (1.63×) | 420.8 (1.91×) | 415.0 (1.93×) | judge: 23,336 tensors; 728 gradients + actions ✓ |
+| QwenGR00T | Qwen3-VL-4B | SDPA | 905.0 | 603.5 (1.50×) | 498.2 (1.82×) | 500.4 (1.81×) | 960 gradients + actions ✓ |
+| QwenPI | Qwen3-VL-4B | SDPA | 1291.5 | 1110.2 (1.16×) | 976.2 (1.32×) | 664.3 (1.94×) | 1,225 gradients + actions ✓ |
+| QwenPI_v3 | Qwen3-VL-4B | SDPA | 1679.6 | 1430.6 (1.17×) | 1012.3 (1.66×) | 702.3 (2.39×) | 1,376 gradients + actions ✓ |
+| QwenDiscreteDiffusion | Qwen3-VL-4B | SDPA | 2507.8 | 2295.9 (1.09×) | 2062.1 (1.22×) | 739.4 (3.39×) | 1,220 gradients + actions ✓ |
+| QwenAdapter | Qwen3-VL-4B | SDPA | 999.2 | 767.8 (1.30×) | 668.4 (1.49×) | — | 1,226 gradients + actions ✓ |
+| LangForce | Qwen3-VL-4B | SDPA | 1414.9 | 894.8 (1.58×) | 719.2 (1.97×) | 720.9 (1.96×) | 961 gradients + actions ✓ |
+| QwenDual | Qwen3-VL-4B | SDPA | 1308.0 | 966.7 (1.35×) | 680.6 (1.92×) | — | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ |
+| QwenOFT | Qwen2.5-VL-3B | SDPA | 1176.3 | 573.5 (2.05×) | 466.1 (2.52×) | — | 840 gradients + actions ✓ |
+| QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ |
+| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 960.9 | 754.5 (1.27×) | 569.1 (1.69×) | 554.7 (1.73×) | 1,072 gradients + actions ✓ |
+| PI0 | PaliGemma (openpi) | eager | 639.6 | 644.0 (0.99×) | 483.2 (1.32×) | 483.8 (1.32×) | — |
+| PI05 | PaliGemma (openpi) | eager | 667.2 | 664.7 (1.00×) | 551.0 (1.21×) | 549.4 (1.21×) | — |
 
 | Fast path | Level | Applies to |
 |---|---|---|
+| `worker_prep` | exact | every framework that hands the batch's images and prompts to its backbone interface (`build_qwenvl_inputs`), on the Qwen2.5-VL, Qwen3-VL and Cosmos-Reason2 interfaces; a framework that edits the prompt registers the edit in one function |
 | `attn_mask` | exact | any backbone whose transformers model builds its mask with `masking_utils` (Qwen, Gemma, Llama, Phi families), with SDPA attention |
-| `hidden_only` | exact | any backbone with an LM head, in calls that ask for hidden states without labels (QwenOFT, QwenGR00T, QwenPI, …) |
+| `hidden_only` | exact | any backbone with an LM head, in calls that ask for hidden states without labels |
 | `vision_attn` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers with SDPA attention, for the image shapes where a probe on the running GPU shows the batched call is bitwise identical |
 | `vision_pos` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers |
-| `worker_prep` | exact | QwenOFT on Qwen3-VL (a framework opts in by registering a builder) |
 | `grad_norm`, `allreduce` | exact | any framework trained with DeepSpeed ZeRO-2 |
+| `worker_examples` | exact | PI0 / PI05: the framework's own sample preparation (image resize and padding, state and action padding) runs in the data-loader workers |
+| `sdpa` | all | a Qwen backbone loaded with flash-attention is switched to PyTorch's scaled-dot-product attention (the same attention from another kernel), which the SDPA paths and the compiled layers below need |
 | `vision_attn_relaxed` | all | the batched vision attention for every uniform image shape (last-bit differences) |
 | `compile_lm`, `compile_vision` | all | backbones with `model.language_model.layers` / `model.visual.blocks` (the Qwen-VL families), with SDPA attention |
+| `condition_once` | all | action heads built on starVLA's cross-attention DiT (GR00T, layer-wise flow matching, discrete diffusion heads): conditioning that the framework repeated for several noise levels is projected once |
+| `unused_views` | all | PI0 / PI05: a camera view that no sample of the batch has is left out instead of being encoded as a black image |
+| `openpi_sdpa` | all | PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul |
+| `tf32` | by name | TF32 for the fp32 matrix products of the action heads (`STARVLA_FAST=all,tf32`): a precision setting, so not part of `all` |
 
-This table is from a later session on a second node, in which the baseline of the headline recipe ran at 796 ms instead of 905 ms and `STARVLA_FAST=all` at 425 ms instead of 453 ms ([sessions](docs/faster/measurement.md#the-judge-on-the-unified-code)). Every row is compared with a baseline from the same job.
+Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)).
 
-The gain is largest on QwenOFT + Qwen3-VL because `worker_prep` has a builder only for that pair; elsewhere the processor still runs in the training process. No fast path touches the action heads of QwenGR00T and QwenPI.
+`exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.58×) and little on PI0 / PI05 (0.99×), whose step is the PaliGemma forward and backward itself.
 
-The Qwen2.5-VL recipes load the backbone with flash-attention, where the SDPA-specific paths and the compiled layers do not apply and are skipped, so `all` selects the same paths as `exact` there. Loading the same backbone with SDPA (`framework.qwenvl.attn_implementation=sdpa`) and `STARVLA_FAST=all` is the fastest configuration measured for it: 554 ms against 775 ms for the flash-attention baseline (1.40×).
+The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `all,tf32` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 976 → 664 ms; QwenPI_v3 1012 → 702 ms). TF32 is a precision setting rather than a reordering, so it is selected by name. The judge accepts `STARVLA_FAST=all,tf32` on the headline recipe as statistically equivalent, and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](docs/faster/measurement.md#tf32)).
+
+The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms.
 
 On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the four full-attention vision layers (32 images × 256 patches, head dimension 80), so `exact` batches only the 28 window-attention layers; `all` batches both.
 
-Not measured: backbones outside the Qwen-VL families (Cosmos-Reason2, MiniCPM-V, PaliGemma, …), the world-model
-and vision-only frameworks, and the co-training and VLM trainers (they call the same hooks).
+PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_sdpa`.
+
+Not measured: the Qwen3.5 and Gemma 4 backbones (they need a newer transformers release than this environment has),
+MiniCPM-V, Florence-2, Molmo2, VILA and the real Cosmos-Reason2 weights (its interface is exercised by the CPU test on
+the Qwen3-VL architecture); QwenFast (it hands label text to the interface, which `worker_prep` leaves to the training
+process), InternVLA-M1 and ABot-M0; the world-model and vision-only frameworks; and the co-training and VLM trainers
+(they call the same hooks).
 
 ## Validation
 
 Everything was judged by a frozen evaluator built before optimization started
 ([docs/faster/judge/](docs/faster/judge/), [how it decides](docs/faster/measurement.md#the-judge)).
 
-**`STARVLA_FAST=exact`.** With the seven exact fast paths on, two 2-step training cases in deterministic mode
+**`STARVLA_FAST=exact`.** With the seven exact fast paths that apply to this recipe on, two 2-step training cases in deterministic mode
 (one with the recipe's periodic evaluation between the steps), on both ranks: 23,336 recorded tensors (the
 loss, and the fp32 gradient, update and both Adam states of all 729 parameters) are bitwise identical to upstream,
 as are the learning rates, the random-number state and a digest of what was fed to the VLM.
@@ -135,7 +156,7 @@ stay within 3σ of upstream's own seed-to-seed spread (6 seeds, frozen before op
 A control run with every learning rate multiplied by 1.02 is rejected by this check (+16σ on the update-size
 endpoints), as are a run whose VLM receives no gradient and a run with a different clipping threshold.
 
-**After the refactor.** The checks above were made before the fast paths were moved behind `STARVLA_FAST`. On the refactored code the judge finds `STARVLA_FAST=exact` bitwise identical again (23,336 of 23,336 tensors, in both later sessions). The three-process check of `STARVLA_FAST=all` did not give a verdict in either session: the baseline ran more than the allowed band faster than the frozen timing, and the judge then refuses to conclude (INVALID). Its own measurements were 1.87× and 1.94×. [Details](docs/faster/measurement.md#the-judge-on-the-unified-code).
+**On the current code.** The checks above were made on the first release, before the fast paths were moved behind `STARVLA_FAST` and extended to the other frameworks. On the current code the judge finds `STARVLA_FAST=exact` bitwise identical again: 23,336 of 23,336 tensors, in each of the four later sessions that ran it. The three-process check of `STARVLA_FAST=all` gave no verdict in the later sessions: the baseline ran faster than the frozen timing by more than the allowed band, and the judge then refuses to conclude (INVALID). Its own measurements were 1.87× to 1.96×. The agent-style check, which compares with the frozen timing and runs the statistical gate, passes for `all,tf32` (tier N2, endpoints within 1.41σ). [Details](docs/faster/measurement.md#the-judge-on-the-unified-code).
 
 **LIBERO evaluation.** A full training run with all fast paths (30,000 steps, seed 42, 2 x B300, global batch 32) was evaluated with starVLA's LIBERO protocol, 500 episodes per suite, next to the released checkpoint in the same pipeline. The released checkpoint was trained by the starVLA authors on 8 GPUs (global batch 128, checkpoint at step 50,000); this is a check that the accelerated code trains a working policy, not a matched-seed comparison. The 30,000 steps took 3 h 51 min of wall time including the recipe's periodic evaluations and three checkpoint saves (462 ms per step overall); at the frozen upstream step time the steps alone would take 7.6 h (not run).
 

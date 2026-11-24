@@ -1,0 +1,46 @@
+{
+ "tree": "$WORK/starvla/ws/starVLA_r15",
+ "switches": {
+  "STARVLA_FAST": "all"
+ },
+ "evaluator_sha256": "868f97722fd37ab3fb2b34a8347147bf4214028f5bf084e73425065a78b68a95",
+ "tree_digest": "416d84f62cc1bf3da0edc12cc414ba8a8b258f61b7b8c46059f2ec95c2b3e58a",
+ "mode": "final",
+ "gates": {
+  "structure": {
+   "status": "PASS",
+   "samples": 96,
+   "batches": 4
+  },
+  "benefit": {
+   "reference_step_ms": [
+    806.3600027901703,
+    816.2269899700186
+   ],
+   "invalid": [
+    "ref_a:frozen_band",
+    "ref_b:frozen_band"
+   ],
+   "candidate_step_ms": 413.51421111496165,
+   "candidate_windows": [
+    408.3437105198391,
+    418.68471171008423
+   ],
+   "reference_ms": 811.2934963800944,
+   "speedup": 1.9619482827267225,
+   "threshold": 1.024324087950597,
+   "spread": 0.012162043975298478,
+   "peak_mem_gib": 58.96524906158447,
+   "gpu_util": 50.1,
+   "status": "INVALID"
+  }
+ },
+ "started": "2026-11-24T07:48:25.448622",
+ "performance": {
+  "speedup": 1.9619482827267225,
+  "reference_step_ms": 811.2934963800944,
+  "candidate_step_ms": 413.51421111496165
+ },
+ "status": "INVALID",
+ "finished": "2026-11-24T08:03:22.173335"
+}

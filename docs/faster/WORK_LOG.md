@@ -164,3 +164,71 @@ The data stage is not a bottleneck (4 workers, 58 ms per sample on the CPU, `dat
   changed.
 - LIBERO through the unified code (released checkpoint, policy servers with `STARVLA_FAST=exact`, 2,000 episodes):
   97.85% (98.0 / 99.8 / 99.0 / 94.6); the first release's inference variables gave 98.25% in the same harness.
+
+## Round 12: every framework, not one
+
+Round 11 put the fast paths behind one setting, but `worker_prep` still had a builder for one framework and one
+backbone, and nothing touched an action head. This round is about the other recipes. Sessions 4 to 8 are five batch
+jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measured in the same job.
+
+- `worker_prep` no longer contains framework code. A worker runs the backbone interface's own `build_qwenvl_inputs` on
+  a stand-in that has the processor and the config but no model; `apply` checks once that the stand-in returns what
+  the interface returns. In the training process the interface returns a worker's result only for a call with the
+  images of that batch (the same objects, or copies with the same pixels) and the very prompts the worker used. A
+  framework that edits the prompt registers the edit in one function (`@prompt`: QwenOFT, QwenAdapter, QwenPI_v3,
+  LangForce, which makes two calls per step); a wrong or missing registration costs the speedup, not correctness.
+  CPU test through whole frameworks (`tests/test_fast_frameworks.py`, small random backbone behind the real
+  processor): QwenOFT, QwenGR00T, QwenPI, QwenPI_v3, QwenAdapter, QwenDiscreteDiffusion, LangForce, QwenDual and
+  CosmosGR00T on Qwen3-VL, the first eight on Qwen2.5-VL: every backbone input comes from the workers, loss and all
+  gradients identical.
+- Real weights, bf16, B300, training batch from a DataLoader with workers, `exact` against the default code (sessions
+  4 and 6): QwenOFT / QwenGR00T / QwenPI on Qwen3-VL and on Qwen2.5-VL with SDPA and with flash-attention, QwenPI_v3
+  (1,376 gradients), QwenAdapter (1,226), QwenDiscreteDiffusion (1,220), LangForce (961): all identical. QwenDual:
+  1,135 of 1,136 identical; `dino_encoder.body.pos_embed` differs between two runs of the default code itself.
+  Judge on that tree, `exact`: 23,336 of 23,336 tensors, PASS N0.
+- `sdpa` (level `all`): a backbone loaded with flash-attention (the Qwen2.5-VL recipes) is switched to PyTorch SDPA
+  first, after which `attn_mask`, the batched vision attention and the compiled layers apply. Before this, `all`
+  equalled `exact` on those recipes. Session 6: QwenOFT + Qwen2.5-VL 877.6 -> 645.6 (`exact`, 1.36x) -> 466.5 ms
+  (`all`, 1.88x; peak memory 63.2 -> 55.3 GiB); QwenGR00T 960.9 -> 754.5 (1.27x) -> 569.1 ms (1.69x).
+- `condition_once` (level `all`): the flow-matching frameworks repeat the VLM's hidden states for several noise levels
+  per sample (8 for the GR00T head, 2 in QwenPI) and every cross-attention layer of the DiT projects all copies to
+  keys and values in fp32. The copies are detected in each call (two tensor comparisons), the projections run on the
+  first copy and the result is repeated. Session 7: QwenGR00T + Qwen3-VL 905.0 -> 603.5 (`exact`, 1.50x) -> 498.2 ms
+  (`all`, 1.82x; it was 1.70x in sessions 4 and 5 without the path); QwenPI 1291.5 -> 1110.2 (1.16x) -> 976.2 ms
+  (1.32x). One-step distance: the loss is unchanged, gradients move by 0.2% (QwenPI) and 1.2% (QwenGR00T).
+- `tf32` (by name only): TF32 for fp32 matrix products. What is left of a DiT-head framework after `all` is mostly the
+  head's fp32 projections of VLM hidden states (profile of QwenPI with `all`: 0.2 s of the 0.39 s forward is
+  `F.linear` in the head). Session 6: QwenPI_v3 1328.7 -> 620.9 ms, QwenDual 852.2 -> 605.4; session 7: QwenPI 976.2 ->
+  664.3; no gain on QwenGR00T once `condition_once` is on (498.2 / 500.4) or on LangForce (719.2 / 720.9). It lowers
+  precision, so it is not part of `all`. Judge on the headline recipe with `all,tf32`: PASS, tier N2, 446.4 ms (2.03x
+  against the frozen timing), gate 3 within 1.41 sigma. Mean loss of steps 100-220 shows no difference from the
+  baseline in any framework.
+- The other frameworks on Qwen3-VL, session 6 (before `condition_once`): QwenPI_v3 1627.3 -> 1389.9 (1.17x) -> 1328.7
+  (1.22x) -> 620.9 ms with TF32 (2.62x); QwenAdapter 999.2 -> 767.8 (1.30x) -> 668.4 (1.49x); LangForce 1414.9 -> 894.8
+  (1.58x) -> 719.2 (1.97x); QwenDual 1209.1 -> 914.6 (1.32x) -> 852.2 (1.42x) -> 605.4 with TF32 (2.00x).
+  QwenDiscreteDiffusion failed in all four runs including the baseline: my generated config asked for 16 action steps
+  and the LIBERO data gives 8 (`make_configs.py` fixed; measured in session 8).
+- PI0 and PI05 (openpi recipe on LIBERO, converted base checkpoints) do not use a `get_vlm_model` backbone, so a
+  fourth hook was added (`build_framework -> fast.accelerate_framework`). `unused_views`: LIBERO has two of the three
+  camera views these models take; the third is an all-black image that goes through SigLIP and stays in the sequence
+  as 256 masked tokens. A view that no sample of the batch has is left out (prefix 816 -> 560 tokens). Session 7:
+  PI0 636.5 -> 626.9 (`exact`: the two DeepSpeed paths, 1.02x) -> 500.7 ms (`all`, 1.27x; 102.5 -> 77.0 GiB); PI05 668.0
+  -> 662.1 -> 532.5 ms (1.25x). The profile of the baseline then gave two more paths: `worker_examples` (exact; the
+  framework's `_prepare_examples`, 33 ms per step in the training process, runs in the workers on a stand-in) and
+  `openpi_sdpa` (level `all`; fused attention instead of matmul, fp32 softmax, matmul in SigLIP and the joint layers).
+- How far does a rounding-level path move one training step (real weights, bf16, deterministic mode, same batch and
+  noise; two runs of the default code agree exactly; session 8)? Compiling the decoder layers, which the judge
+  accepts, moves the language model's gradient by 22% (QwenGR00T) and 28% (QwenOFT), the loss by 0.001% and 1%. The
+  vision tower's
+  one-step gradient is mostly rounding noise: compiling the vision blocks leaves it with cosine 0.84 (QwenOFT) and
+  -0.04 (QwenGR00T) to the default one, and switching the backbone from SDPA to eager attention, which is not our
+  change and computes the same function, with 0.55 and -0.09. Flash-attention -> SDPA is in the same range (language
+  model 5% and 16%, vision tower cosine 0.29 and 0.24). `openpi_sdpa` moves PI0's gradients by 7% (cosine 0.998),
+  `unused_views` by 3%. So a single step's gradient cannot tell a rounding-level
+  change from a wrong one at this precision; the loss, the 60-step statistical gate and the 220-step loss curves can.
+- Found on the way: the same baseline moved by 10% between jobs on the same node (QwenGR00T 1000.8, 998.5, 905.0 ms in
+  sessions 4, 5, 7), and the headline recipe with `all` ran at 424.5 ms in session 4 and 464.3 ms in session 6 with
+  the same paths applied. Only numbers of one job are compared anywhere.
+- Found on the way: my first distance script concatenated all gradients on the GPU and cast them to fp64, which does
+  not fit for 3.9 billion elements; it now accumulates the dot products in chunks. It also ran the step without the
+  trainer's bf16 autocast, which PI05 needs. The session 8 numbers are from the corrected script.
