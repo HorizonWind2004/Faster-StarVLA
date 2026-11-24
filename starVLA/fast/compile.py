@@ -18,27 +18,41 @@ _gc = {"layers": 0, "calls": 0, "frozen": False}
 _FREEZE_AFTER_STEPS = 4  # training forwards before the freeze
 
 
-def _compile_forwards(layers, dynamic):
+def _raise_cache_limits(entries):
     import torch._dynamo
 
-    # one cache entry per layer instance on the shared code object
+    # one cache entry per layer instance (or per specialisation) on a shared code object
     for name in ("recompile_limit", "cache_size_limit"):
         if hasattr(torch._dynamo.config, name):
-            setattr(torch._dynamo.config, name, max(getattr(torch._dynamo.config, name), 4 * len(layers)))
-    _gc["layers"] += len(layers)
+            setattr(torch._dynamo.config, name, max(getattr(torch._dynamo.config, name), 4 * entries))
+    _gc["layers"] += entries
+
+
+def _compiled_for_training(eager, dynamic):
+    compiled = torch.compile(eager, dynamic=dynamic)
+
+    def call(*args, **kwargs):
+        if torch.is_grad_enabled():
+            out = compiled(*args, **kwargs)
+            if not _gc["frozen"]:
+                _freeze_compiler_objects()
+            return out
+        return eager(*args, **kwargs)
+
+    return call
+
+
+def _compile_forwards(layers, dynamic):
+    _raise_cache_limits(len(layers))
     for layer in layers:
-        eager = layer.forward
-        compiled = torch.compile(eager, dynamic=dynamic)
+        layer.forward = _compiled_for_training(layer.forward, dynamic)
 
-        def forward(*args, _eager=eager, _compiled=compiled, **kwargs):
-            if torch.is_grad_enabled():
-                out = _compiled(*args, **kwargs)
-                if not _gc["frozen"]:
-                    _freeze_compiler_objects()
-                return out
-            return _eager(*args, **kwargs)
 
-        layer.forward = forward
+def compile_method(owner, name, variants, dynamic=True):
+    """Compile `owner.<name>` for training calls: a method that Dynamo specialises on a Python argument (a layer
+    index), `variants` times."""
+    _raise_cache_limits(variants)
+    setattr(owner, name, _compiled_for_training(getattr(owner, name), dynamic))
 
 
 def _freeze_compiler_objects():

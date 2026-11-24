@@ -20,6 +20,10 @@ openpi_sdpa: the SigLIP tower and the joint PaliGemma / action-expert layers com
 in fp32, matmul, which materialises a [batch, heads, tokens, tokens] weight tensor twice per layer.
 `scaled_dot_product_attention` computes the same attention (same mask, same scale) in one fused kernel. The softmax
 then runs in the activations' dtype instead of fp32, so results differ in rounding.
+
+openpi_compile: Inductor compiles the SigLIP encoder layers and the framework's joint layer function (one graph per
+layer index) for training calls, as compile_lm / compile_vision do for the Qwen backbones. Same operations, fused
+kernels: results differ in rounding.
 """
 import threading
 import types
@@ -246,4 +250,25 @@ def use_sdpa(framework):
         method = getattr(framework, name, None)
         if callable(method) and not getattr(method, "_starvla_openpi_sdpa", False):
             setattr(framework, name, fused(method))
+    return True
+
+
+# ---------------------------------------------------------------------------------------------- openpi_compile
+
+
+def compile_layers(framework):
+    joint = getattr(framework, "forward_shared_gemma_layer", None)
+    language_model = getattr(getattr(framework, "vlm", None), "language_model", None)
+    if not callable(joint) or not hasattr(language_model, "layers"):
+        return False
+    if getattr(framework, "_starvla_openpi_compiled", False):
+        return True
+    from starVLA.fast import compile as regional
+
+    vision_model = getattr(getattr(framework.vlm, "vision_tower", None), "vision_model", None)
+    vision_layers = getattr(getattr(vision_model, "encoder", None), "layers", None)
+    if vision_layers is not None and len(vision_layers):
+        regional._compile_forwards(vision_layers, dynamic=True)
+    regional.compile_method(framework, "forward_shared_gemma_layer", variants=len(language_model.layers))
+    framework._starvla_openpi_compiled = True
     return True

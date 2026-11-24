@@ -2,6 +2,7 @@
 
     export STARVLA_FAST=exact    # every fast path whose results are bitwise identical to the default code
     export STARVLA_FAST=all      # exact + the paths that change floating-point rounding only (compiled layers, SDPA)
+    export STARVLA_FAST=max      # all + the precision settings (TF32 for fp32 matrix products, bf16 softmax in PI0)
     export STARVLA_FAST=exact,-worker_prep,compile_lm    # a level and/or names; "-name" removes one
     unset, "off" or "0"          # the default code paths
 
@@ -73,21 +74,27 @@ FAST_PATHS = {  # applied in this order
     "unused_views": FastPath(False, "framework", "openpi:unused_views",
                              "PI0 / PI05: a camera view that no sample of the batch has is left out instead of "
                              "being encoded as a black image and masked"),
-    "openpi_sdpa": FastPath(False, "framework", "openpi:use_sdpa",
-                            "PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint "
-                            "PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul"),
+    "openpi_compile": FastPath(False, "framework", "openpi:compile_layers",
+                               "PI0 / PI05: SigLIP layers and the joint PaliGemma / action-expert layers compiled "
+                               "with Inductor for training calls"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
                                 ("STARVLA_DS_REDUCE_TO_OWNER",)),
-    # a precision setting rather than a reordering; selectable by name only
+    # precision settings rather than reorderings (tier N2); selectable by name or with the level "max"
+    "openpi_sdpa": FastPath(False, "framework", "openpi:use_sdpa",
+                            "PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint "
+                            "PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul (the softmax "
+                            "then runs in bf16)"),
     "tf32": FastPath(False, "framework", "precision:apply_tf32",
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
-BY_NAME_ONLY = frozenset({"reduce_to_owner", "tf32"})
+PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
+BY_NAME_ONLY = frozenset({"reduce_to_owner"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
-    "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY),
+    "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY | PRECISION),
+    "max": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY),
 }
 _OFF = ("", "0", "off", "none", "false", "False")
 _cache = (None, frozenset())

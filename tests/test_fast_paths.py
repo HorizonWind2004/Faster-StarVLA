@@ -300,9 +300,12 @@ def test_selection():
         assert next(iter(fast.FAST_PATHS)) == "sdpa"  # applied before the paths that are written for SDPA
         assert not fast.enabled("reduce_to_owner")
         os.environ["STARVLA_FAST"] = "all"
-        assert not fast.enabled("tf32") and not fast.enabled("reduce_to_owner")  # by name only
+        assert not fast.enabled("tf32") and not fast.enabled("openpi_sdpa")  # precision settings: level "max" or by name
+        assert not fast.enabled("reduce_to_owner")  # by name only
         os.environ["STARVLA_FAST"] = "all,tf32"
-        assert fast.enabled("tf32") and fast.enabled("compile_lm")
+        assert fast.enabled("tf32") and fast.enabled("compile_lm") and not fast.enabled("openpi_sdpa")
+        os.environ["STARVLA_FAST"] = "max"
+        assert fast.selection() == fast.LEVELS["all"] | {"tf32", "openpi_sdpa"} and not fast.enabled("reduce_to_owner")
         os.environ["STARVLA_FAST"] = "all,-worker_prep"
         assert fast.enabled("compile_vision") and not fast.enabled("worker_prep")
         assert fast.enabled("vision_attn_relaxed") and "vision_attn_relaxed" not in fast.LEVELS["exact"]

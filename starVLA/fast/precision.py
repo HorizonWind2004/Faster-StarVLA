@@ -1,4 +1,4 @@
-"""TF32 for fp32 matrix products (selectable by name only: STARVLA_FAST=all,tf32).
+"""TF32 for fp32 matrix products (level "max", or by name: STARVLA_FAST=all,tf32).
 
 The action heads of the flow-matching frameworks (QwenGR00T, QwenPI, ...) run in fp32 while the backbone runs in bf16
 autocast. PyTorch's default computes fp32 matrix products at full precision; with TF32 the GPU rounds the inputs of
