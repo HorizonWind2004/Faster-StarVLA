@@ -131,7 +131,7 @@ package, `starVLA/fast/`, behind one setting:
 | `STARVLA_FAST` | Fast paths |
 |---|---|
 | `exact` | `attn_mask`, `hidden_only`, `vision_attn`, `vision_pos`, `worker_prep`, `worker_examples`, `grad_norm`, `allreduce` |
-| `all` | `exact` + `sdpa`, `vision_attn_relaxed`, `compile_lm`, `compile_vision`, `compile_head`, `compile_world_model`, `condition_once`, `unused_views`, `openpi_one_pass`, `openpi_compile`, `adamw_compiled`: the same operations at the same precision, in another order or from another kernel |
+| `all` | `exact` + `sdpa`, `vision_attn_relaxed`, `compile_lm`, `compile_vision`, `compile_head`, `compile_world_model`, `text_longest`, `condition_once`, `unused_views`, `openpi_one_pass`, `openpi_compile`, `adamw_compiled`: the same operations at the same precision, in another order or from another kernel |
 | `max` | `all` + `tf32`, `openpi_sdpa`: the precision of an operation changes (on the Qwen frameworks `max` is `all,tf32`) |
 | by name only | `reduce_to_owner` (slower on two ranks), `grad_cast` and `unit_clip` (DeepSpeed's step: no measurable difference, and `unit_clip` reads the clipping factor on the host every step) |
 | `exact,-worker_prep,compile_lm` | a level and/or names; `-name` removes one |

@@ -329,3 +329,18 @@ Code first, then one probe job (session 11, job 73035), then one verification jo
 - QwenPI statistical gate on the final tree against session 10's six upstream seeds: `all` 6 seeds equivalent,
   −0.79σ..+0.06σ; `max` 4 seeds equivalent, −1.61σ..+0.95σ (VLM update size); upstream against itself reaches 1.79σ.
 - No compile fallback and no Inductor error in the whole job.
+
+## Round 14: code for the other backbones (25 Nov)
+
+The goal's remaining families, written first and checked on CPU; GPU verification follows in one job.
+
+| Backbone | Paths that now reach it | How it was checked so far |
+|---|---|---|
+| Qwen3.5 (transformers 5) | `vision_attn` (its vision attention is Qwen3-VL's per-chunk code), `vision_pos` (memoized `transformers.vision_utils` helpers), `hidden_only`, `compile_lm` / `compile_vision` (a layer structure that fails to compile, e.g. linear attention through an extension kernel, is not tried again; full-attention layers still are) | source read in transformers 5.24.1; helper memoization unit-tested |
+| Gemma 4 (transformers 5) | `sdpa` (its default is flash-attention), `compile_lm`, `compile_vision` (`vision_tower.encoder.layers`); `hidden_only` now leaves calls with `logits_to_keep` > 0 alone (the interface already keeps one position; Gemma soft-caps its logits) | unit test with a soft-capping stand-in |
+| MiniCPM-V 4.6 / 4.7 (transformers 5) and remote code | `vision_pos` (vision_utils helpers), `compile_lm` / `compile_vision` (native and `llm` / `vpm` paths) | path test |
+| Florence-2 (remote code) | `compile_lm` on the encoder starVLA runs (`language_model.model.encoder.layers`), `compile_vision` on DaViT stages | path test |
+| Wan world model | new `text_longest` (all): UMT5-XXL on the batch's longest instruction instead of 512 padded tokens; upstream zeroes every position past the instruction | upstream `_encode_text` against the fast one on a tiny UMT5: same shape, zeros, kept values bitwise equal in fp32 |
+| Cosmos-Predict2 | `compile_world_model` only; its padded T5 outputs depend on the padding length, so `text_longest` does not apply | — |
+
+The pinned environment has transformers 4.57.0 (upstream's pin), which has no Qwen3.5 or Gemma 4; those interfaces need transformers 5.

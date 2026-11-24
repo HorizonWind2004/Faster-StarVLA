@@ -104,6 +104,7 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | `openpi_one_pass` | all | PI0 / PI05：一个 batch 的多个相机视角合成一次 SigLIP 调用，不再每个视角调用一次 |
 | `adamw_compiled` | all | 所有用 DeepSpeed ZeRO-2 和 torch 融合 AdamW 训练的框架：每个 rank 的展平分区的更新编译成一个内核（B300 上 22.5 亿元素的分区，torch 融合内核 104.9 ms，编译版 9.4 ms） |
 | `compile_world_model` | all | 视频世界模型底座（Wan、Cosmos-Predict2）的 transformer 各层 |
+| `text_longest` | all | Wan：4.7 B 的 UMT5 文本编码器只算到本批最长指令，不再算满 512 个填充位置（原版之后会把指令之后的位置清零） |
 | `tf32` | max | fp32 矩阵乘使用 TF32，fp32 动作头的时间主要花在这上面。属于精度设置，所以不在 `all` 里 |
 | `openpi_sdpa` | max | PI0 / PI05：SigLIP 视觉塔和 PaliGemma / 动作专家的联合层改用融合的 scaled-dot-product attention，取代“矩阵乘、fp32 softmax、矩阵乘”；softmax 因此在 bf16 下计算 |
 
@@ -119,9 +120,11 @@ Qwen2.5-VL 用 SDPA 时（bf16、B300），4 个全注意力视觉层（32 张�
 
 PI0 和 PI05 自带 PaliGemma，不走 `get_vlm_model`。它们的 `exact` 是 `worker_examples` 加两条 DeepSpeed 路径；`all` 再加 `unused_views`（LIBERO 只有这类模型所需三个相机视角中的两个，前缀从 816 个 token 缩到 560 个）和 `openpi_compile`；`max` 再加 `openpi_sdpa`。整个模型本来就跑在 bf16，所以 TF32 在这里没有作用。
 
-没有实测：Qwen3.5 和 Gemma 4 底座（需要比当前环境更新的 transformers）、MiniCPM-V、Florence-2、Molmo2、VILA，以及真实的
+代码已写、还没上 GPU 实测：Qwen3.5（`vision_attn`、`vision_pos`、`hidden_only` 在 CPU 测试的小模型上逐位一致，用 transformers 5 跑）、
+Gemma 4、MiniCPM-V（包括 MiniCPM-RobotManip 里的那个）、Florence-2，以及 Wan 世界模型（`text_longest`，CPU 测试里和原版文本编码结果相同）。
+Qwen3.5 和 Gemma 4 需要 transformers 5，上游固定的是 4.57。没有实测：Molmo2、VILA，以及真实的
 Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑过）；QwenFast（它把标签文本交给接口，`worker_prep` 遇到这种调用会
-留给训练进程处理）、InternVLA-M1 和 ABot-M0；世界模型和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。
+留给训练进程处理）、InternVLA-M1 和 ABot-M0；Cosmos-Predict2 和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。
 
 ## 验证
 

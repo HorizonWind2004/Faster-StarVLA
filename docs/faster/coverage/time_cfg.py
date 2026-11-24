@@ -30,6 +30,7 @@ ap.add_argument('--host-profile', type=int, default=0,
 ap.add_argument('--stages', type=int, default=0,
                 help='time forward, backward and optimizer step separately over this many steps (synchronized at the edges)')
 ap.add_argument('--cache-dir', help='keep the compiler caches (Inductor, Triton) here across runs, to time a warm start')
+ap.add_argument('--python', help='train with this interpreter instead of the judge\'s (a backbone that needs transformers 5)')
 a = ap.parse_args()
 a.out = a.out if a.out.startswith('/') else str(WS / a.out)  # the training process runs in the tree
 
@@ -55,6 +56,13 @@ for item in a.set:
 bench.CFG['train_args'] = args
 if a.model:
     bench.CFG['assets'] = dict(bench.CFG['assets'], model=a.model)
+if a.python:  # accelerate launch from that environment; its workers inherit the interpreter
+    bench.PY = a.python
+    launcher = Path(a.out, 'accelerate.sh')
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(f'#!/bin/sh\nexec {a.python} -m accelerate.commands.accelerate_cli "$@"\n')
+    launcher.chmod(0o755)
+    bench.ACCELERATE = str(launcher)
 switches = {'STARVLA_FAST': a.fast} if a.fast else {}
 with bench.GpuLock():
     extra_env = {'CUDA_LAUNCH_BLOCKING': '1'} if a.cprofile else {}
