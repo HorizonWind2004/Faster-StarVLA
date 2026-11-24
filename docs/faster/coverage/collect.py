@@ -217,6 +217,14 @@ def stat_summary(folder):
 
 
 stat_gate = {p.name: stat_summary(p) for p in sorted((WS / "runs/r17").glob("stat_*")) if (p / "summary.json").exists()}
+# session 12 reran all / max on the final tree (all now with adamw_compiled and compile_head) against the same upstream seeds
+for name, summary in stat_gate.items():
+    final = ROOTS[12] / name
+    if summary and (final / "summary.json").exists():
+        newer = stat_summary(final)
+        for fast, entry in newer["candidates"].items():
+            summary["candidates"][fast] = {**entry, "session": 12}
+        summary["candidates_from_session"] = {fast: 12 if fast in newer["candidates"] else 10 for fast in summary["candidates"]}
 # session 8: the headline recipe on the final tree and on the tree of session 4, alternating in one job
 alternating = {tag: timing("oft_q3", (f"{tag}_summary.json",), ROOTS[8])
                for tag in ("ref", "exact", "all", "all_old", "all2", "all_old2", "all_tf32", "ref2")}

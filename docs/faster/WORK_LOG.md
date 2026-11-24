@@ -321,4 +321,11 @@ Code first, then one probe job (session 11, job 73035), then one verification jo
 - Judge on the final tree: `exact` PASS N0, 23,336/23,336 tensors bitwise, 500.3 ms (1.81× the frozen 906.9 ms);
   `all` (now with `adamw_compiled` and `compile_head`) PASS N1, gate 3 equivalent, endpoints within 1.77σ,
   340.3 ms (2.66×; 2.13× on 8427140 without the two paths).
-- Table (13 recipes × ref / exact / all / max) and the QwenPI statistical gate for the new `all` / `max`: running.
+- Table, same job (baseline / exact / all / max, ms per step): QwenOFT 801.6 / 489.8 / 292.2 (2.74×) / 305.5;
+  GR00T 880.4 / 605.2 / 399.1 / 392.6; QwenPI 1293.8 / 1110.8 / 811.7 / 530.5 (2.44×); PI_v3 1638.3 / 1389.5 / 849.8 /
+  519.7 (3.15×); DiscreteDiffusion 2512.9 / 2295.7 / 1884.9 / 566.9 (4.43×); Adapter 1052.3 / 767.9 / 553.0 / 555.8;
+  PI0 639.2 / 591.5 / 290.3 (2.20×) / 288.9; PI05 670.2 / 626.8 / 308.3 (2.17×) / 315.9. `max` helps where the head
+  runs fp32 matrix products (PI, PI_v3, DiscreteDiffusion); elsewhere it equals `all`.
+- QwenPI statistical gate on the final tree against session 10's six upstream seeds: `all` 6 seeds equivalent,
+  −0.79σ..+0.06σ; `max` 4 seeds equivalent, −1.61σ..+0.95σ (VLM update size); upstream against itself reaches 1.79σ.
+- No compile fallback and no Inductor error in the whole job.

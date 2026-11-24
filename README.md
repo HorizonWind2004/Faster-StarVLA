@@ -81,19 +81,19 @@ baseline of the same job:
 
 | Framework | Backbone | Attention in the recipe | Baseline (ms/step) | `exact` | `all` | `max` | `exact` checked bit for bit |
 |---|---|---|---:|---:|---:|---:|---|
-| QwenOFT | Qwen3-VL-4B | SDPA | 786.3 | 496.1 (1.58×) | 422.6 (1.86×) | — | judge: 23,336 tensors; 728 gradients + actions ✓ |
-| QwenGR00T | Qwen3-VL-4B | SDPA | 902.9 | — | 495.0 (1.82×) | — | 960 gradients + actions ✓ |
-| QwenPI | Qwen3-VL-4B | SDPA | 1302.9 | — | 963.7 (1.35×) | — | 1,225 gradients + actions ✓ |
-| QwenPI_v3 | Qwen3-VL-4B | SDPA | 1679.6 | 1430.6 (1.17×) | 1012.3 (1.66×) | 702.3 (2.39×) | 1,376 gradients + actions ✓ |
-| QwenDiscreteDiffusion | Qwen3-VL-4B | SDPA | 2507.8 | 2295.9 (1.09×) | 2062.1 (1.22×) | 739.4 (3.39×) | 1,220 gradients + actions ✓ |
-| QwenAdapter | Qwen3-VL-4B | SDPA | 1040.0 | — | 623.0 (1.67×) | — | 1,226 gradients + actions ✓ |
-| LangForce | Qwen3-VL-4B | SDPA | 1577.5 | 955.9 (1.65×) | 780.8 (2.02×) | 774.9 (2.04×) | 961 gradients + actions ✓ |
-| QwenDual | Qwen3-VL-4B | SDPA | 1308.0 | 966.7 (1.35×) | 680.6 (1.92×) | 665.0 (1.97×) | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ |
-| QwenOFT | Qwen2.5-VL-3B | SDPA | 1176.3 | 573.5 (2.05×) | 466.1 (2.52×) | — | 840 gradients + actions ✓ |
+| QwenOFT | Qwen3-VL-4B | SDPA | 801.6 | 489.8 (1.64×) | 292.2 (2.74×) | 305.5 (2.62×) | judge: 23,336 tensors; 728 gradients + actions ✓ |
+| QwenGR00T | Qwen3-VL-4B | SDPA | 880.4 | 605.2 (1.45×) | 399.1 (2.21×) | 392.6 (2.24×) | 960 gradients + actions ✓ |
+| QwenPI | Qwen3-VL-4B | SDPA | 1293.8 | 1110.8 (1.16×) | 811.7 (1.59×) | 530.5 (2.44×) | 1,225 gradients + actions ✓ |
+| QwenPI_v3 | Qwen3-VL-4B | SDPA | 1638.3 | 1389.5 (1.18×) | 849.8 (1.93×) | 519.7 (3.15×) | 1,376 gradients + actions ✓ |
+| QwenDiscreteDiffusion | Qwen3-VL-4B | SDPA | 2512.9 | 2295.7 (1.09×) | 1884.9 (1.33×) | 566.9 (4.43×) | 1,220 gradients + actions ✓ |
+| QwenAdapter | Qwen3-VL-4B | SDPA | 1052.3 | 767.9 (1.37×) | 553.0 (1.90×) | 555.8 (1.89×) | 1,226 gradients + actions ✓ |
+| LangForce | Qwen3-VL-4B | SDPA | 1439.6 | 905.7 (1.59×) | 686.5 (2.10×) | 673.7 (2.14×) | 961 gradients + actions ✓ |
+| QwenDual | Qwen3-VL-4B | SDPA | 1201.1 | 909.2 (1.32×) | 546.6 (2.20×) | 521.0 (2.31×) | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ |
+| QwenOFT | Qwen2.5-VL-3B | SDPA | 1013.8 | 539.9 (1.88×) | 317.3 (3.20×) | — | 840 gradients + actions ✓ |
 | QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ |
-| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 956.3 | 755.6 (1.27×) | 554.7 (1.72×) | 546.9 (1.75×) | 1,072 gradients + actions ✓ |
-| PI0 | PaliGemma (openpi) | eager | 649.7 | — | 378.8 (1.72×) | — | — |
-| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | 468.6 (1.42×) | 465.1 (1.43×) | — |
+| QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ |
+| PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
+| PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
 
 | Fast path | Level | Applies to |
 |---|---|---|
@@ -119,9 +119,9 @@ baseline of the same job:
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)).
 
-`exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.65×) and little on PI0 / PI05 (—), whose step is the PaliGemma forward and backward itself.
+`exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.59×) and little on PI0 / PI05 (1.08×), whose step is the PaliGemma forward and backward itself.
 
-The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI_v3 1012 → 702 ms; QwenDiscreteDiffusion 2062 → 739 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent; the same test on QwenPI (`all` on 6 seeds and `max` on 4 seeds) finds every endpoint within the judge's limit of 3σ, the largest being 2.8σ (action head update size with `max`) ([details](docs/faster/measurement.md#the-statistical-gate-on-qwenpi)), and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](docs/faster/measurement.md#tf32)).
+The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 812 → 531 ms; QwenPI_v3 850 → 520 ms; QwenDiscreteDiffusion 1885 → 567 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent; the same test on QwenPI (`all` on 6 seeds and `max` on 4 seeds) finds every endpoint within the judge's limit of 3σ, the largest being 1.6σ (VLM update size with `max`) ([details](docs/faster/measurement.md#the-statistical-gate-on-qwenpi)), and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](docs/faster/measurement.md#tf32)).
 
 The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms.
 
