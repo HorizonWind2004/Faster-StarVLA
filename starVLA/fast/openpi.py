@@ -40,11 +40,18 @@ class StandIn:
     """A framework's plain settings and its class's methods, without the model: enough for `_prepare_examples`."""
 
     def __init__(self, framework):
-        from omegaconf import DictConfig
+        from omegaconf import OmegaConf
 
         self.framework_class = type(framework)
-        self.settings = {name: value for name, value in vars(framework).items()
-                         if isinstance(value, (*_SETTINGS, DictConfig)) and not name.startswith("_")}
+        self.settings = {}
+        for name, value in vars(framework).items():
+            if name.startswith("_"):
+                continue
+            inner = vars(value).get("_cfg") if hasattr(value, "__dict__") else None  # the trainer's access-tracking wrapper
+            if OmegaConf.is_config(inner):
+                self.settings[name] = inner
+            elif isinstance(value, _SETTINGS) or OmegaConf.is_config(value):
+                self.settings[name] = value
 
     def __getattr__(self, name):
         state = self.__dict__

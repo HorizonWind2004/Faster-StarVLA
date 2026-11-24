@@ -163,6 +163,7 @@ def _check_openpi(tokenizer_model):
     from starVLA.dataloader.lerobot_datasets import collate_fn
     from starVLA.fast import openpi
     from starVLA.model.framework.base_framework import build_framework
+    from starVLA.training.trainer_utils.config_tracker import wrap_config
 
     rng = np.random.default_rng(0)
     samples = [{"image": [Image.fromarray(rng.integers(0, 255, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
@@ -179,7 +180,7 @@ def _check_openpi(tokenizer_model):
         def run(setting):
             os.environ["STARVLA_FAST"] = setting
             torch.manual_seed(0)
-            model = build_framework(cfg).double().train()
+            model = build_framework(wrap_config(cfg)).double().train()  # wrapped as the trainer wraps it
             prefix_tokens, joint_layers = [], model.forward_with_action_expert
             model.forward_with_action_expert = lambda **kw: (prefix_tokens.append(kw["prefix_embs"].shape[1]), joint_layers(**kw))[1]
             batch = samples
