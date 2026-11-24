@@ -54,9 +54,11 @@ examples = [{
 
 
 def group(name):
-    if '.visual.' in name or '.vision_tower.' in name:
+    if '.visual.' in name or '.vision_tower.' in name or '.vpm.' in name:
         return 'vision tower'
-    return 'language model' if name.startswith(('qwen_vl_interface.', 'vlm.')) else 'action head'
+    if name.startswith('backbone.'):  # a world model (Wan, Cosmos-Predict2)
+        return 'world model'
+    return 'language model' if name.startswith(('qwen_vl_interface.', 'vlm.', 'model.vlm.')) else 'action head'
 
 
 def step():
@@ -113,8 +115,10 @@ if paths.startswith('attn:'):  # not a fast path: another attention implementati
 else:
     os.environ['STARVLA_FAST'] = paths
     applied, skipped = fast._run('framework', model)
-    if hasattr(model, 'qwen_vl_interface'):
-        more = fast._run('backbone', model.qwen_vl_interface)
+    inner = getattr(getattr(model, 'model', None), 'vlm', None)  # MiniCPM-RobotManip builds its backbone itself
+    for target in [getattr(model, name) for name in ('qwen_vl_interface', 'backbone') if hasattr(model, name)] + \
+            ([fast.InnerBackbone(inner)] if inner is not None else []):
+        more = fast._run('backbone', target)
         applied, skipped = applied + more[0], skipped + more[1]
 res = {'framework': framework, 'backbone': os.path.basename(model_dir.rstrip('/')), 'loaded_with': attn,
        'paths': paths, 'applied': applied, 'not_applicable': skipped,
