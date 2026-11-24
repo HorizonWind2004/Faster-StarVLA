@@ -60,6 +60,8 @@ FAST_PATHS = {  # applied in this order
     "allreduce": FastPath(True, "engine", "deepspeed:plain_allreduce",
                           "DeepSpeed ZeRO-2 gradient buckets all-reduced in place",
                           ("STARVLA_DS_PLAIN_ALLREDUCE",)),
+    # reads the clipping factor on the host: a synchronization in every step (bf16 steps have none otherwise) to save
+    # one pass of 2.6 ms; selectable by name only
     "unit_clip": FastPath(True, "engine", "deepspeed:skip_unit_clip",
                           "DeepSpeed ZeRO-2 step: no pass over the gradient to multiply it by a clipping factor of "
                           "exactly 1"),
@@ -107,7 +109,7 @@ FAST_PATHS = {  # applied in this order
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
 PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
-BY_NAME_ONLY = frozenset({"reduce_to_owner"})
+BY_NAME_ONLY = frozenset({"reduce_to_owner", "unit_clip"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
     "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY | PRECISION),

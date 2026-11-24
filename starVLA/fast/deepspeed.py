@@ -8,7 +8,9 @@ cast_while_flattening
                    gradient is copied to its place in an fp32 buffer instead; the copy casts. Same values, one pass.
 skip_unit_clip     step() multiplies the fp32 gradient by 1 / clip in every step, also when the norm is below the
                    clipping threshold and the factor is exactly 1: a pass over the whole partition that changes
-                   nothing (x * 1.0 is x for every finite x and for infinities). That pass is skipped.
+                   nothing (x * 1.0 is x for every finite x and for infinities). That pass is skipped. Knowing the
+                   factor means reading it on the host, a synchronization that the bf16 step otherwise does not
+                   have, so this is selectable by name only.
 plain_allreduce    all-reduce each gradient bucket in place (zero_optimization.reduce_scatter = false) instead of
                    slicing it per parameter and owner, concatenating the slices, all-reducing the copy and copying
                    the owned part back. On two ranks (a + b) * 0.5 and a * 0.5 + b * 0.5 are the same bf16 value.
