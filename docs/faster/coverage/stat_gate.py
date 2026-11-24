@@ -14,6 +14,9 @@ included) and endpoints, for another framework:
 
     python3 coverage/stat_gate.py <framework> <out dir> <candidate tree> <STARVLA_FAST value>[:<seeds>] ...
 
+With the reference tree as the candidate tree and the value `off`, upstream is compared with itself (a second run of
+the same seeds): the control for whether the paired comparison applies to this framework at all.
+
 Recordings that exist in <out dir> are kept, so more seeds or settings can be added later. Nothing of the judge is
 modified; its launcher and recorder are imported and given other training arguments.
 """
@@ -62,6 +65,8 @@ if not all(record(reference, '', 'ref', seed) for seed in seeds):
 numerics('traj-freeze', '--ref', str(out / 'ref'), '--spec', str(judge.rel(judge.CFG['trajectory']['spec'])), '--k', str(sigma_k),
          '--out', str(out / 'frozen.json'))
 summary = {'framework': framework, 'seeds': seeds, 'sigma_k': sigma_k, 'candidates': {}}
+if (out / 'summary.json').exists():  # settings recorded by earlier calls
+    summary['candidates'] = json.loads((out / 'summary.json').read_text()).get('candidates', {})
 
 
 def endpoints(report):

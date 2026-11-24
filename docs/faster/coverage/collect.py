@@ -9,6 +9,7 @@ Sessions 4 and later are the runs after worker_prep was made to work for every f
 `timing_by_session` has every combination measured in them, and `coverage` the latest measurement of each.
 """
 import json
+import itertools
 import statistics
 import sys
 from pathlib import Path
@@ -168,7 +169,49 @@ rows4, rows5 = by_session[4], by_session[5]
 # session 9: PI0 / PI05, the levels all and max alternating in one job
 pi_alternating = {combo: {tag: cell for tag in ("ref", "exact", "all", "max", "all2", "max2")
                           if (cell := timing(combo, (f"{tag}_summary.json",), ROOTS[9]))} for combo in ("pi0", "pi05")}
-stat_gate = {p.parent.name: load(p) for p in sorted((WS / "runs/r17").glob("stat_*/summary.json"))}
+
+
+def permutation_p(a, b):
+    """Two-sided exact permutation test on the difference of the means of two small samples."""
+    pooled, observed, hits, total = a + b, abs(statistics.fmean(a) - statistics.fmean(b)), 0, 0
+    for chosen in itertools.combinations(range(len(pooled)), len(a)):
+        x = [pooled[i] for i in chosen]
+        y = [pooled[i] for i in range(len(pooled)) if i not in chosen]
+        total += 1
+        hits += abs(statistics.fmean(x) - statistics.fmean(y)) >= observed * (1 - 1e-12)
+    return hits / total
+
+
+def stat_summary(folder):
+    """The judge's paired verdicts as recorded by stat_gate.py, plus an unpaired comparison of each candidate's
+    seeds with the reference's seeds (for a framework whose upstream does not reproduce itself on a seed)."""
+    summary, frozen = load(folder / "summary.json"), load(folder / "frozen.json")
+    if not summary or not frozen:
+        return None
+    reference = {name: [values[name] for _, values in sorted(frozen["reference_values"].items(), key=lambda kv: int(kv[0]))]
+                 for name in frozen["endpoints"]}
+    out = {"framework": summary["framework"], "reference_seeds": summary["seeds"], "sigma_k": summary["sigma_k"],
+           "reference": {name: {"values": reference[name], "mean": statistics.fmean(reference[name]),
+                                "sigma_seed": frozen["endpoints"][name]["sigma_seed"]} for name in reference},
+           "candidates": {}}
+    for fast, entry in summary["candidates"].items():
+        if not entry.get("endpoints"):
+            out["candidates"][fast] = entry
+            continue
+        seeds, endpoints = entry["seeds"], {}
+        for name, e in entry["endpoints"].items():
+            values = [frozen["reference_values"][str(seed)][name] + d for seed, d in zip(seeds, e["differences"])]
+            sigma = frozen["endpoints"][name]["sigma_seed"]
+            endpoints[name] = {"values": values, "mean": statistics.fmean(values),
+                               "paired_mean_difference_in_sigma": e["difference_in_sigma"], "paired_state": e["state"],
+                               "paired_differences_in_sigma": [d / sigma for d in e["differences"]] if sigma else None,
+                               "difference_of_means_in_sigma": (statistics.fmean(values) - statistics.fmean(reference[name])) / sigma if sigma else None,
+                               "permutation_p": permutation_p(values, reference[name]) if len(values) >= 3 else None}
+        out["candidates"][fast] = {"seeds": seeds, "paired_verdict": entry["verdict"], "endpoints": endpoints}
+    return out
+
+
+stat_gate = {p.name: stat_summary(p) for p in sorted((WS / "runs/r17").glob("stat_*")) if (p / "summary.json").exists()}
 # session 8: the headline recipe on the final tree and on the tree of session 4, alternating in one job
 alternating = {tag: timing("oft_q3", (f"{tag}_summary.json",), ROOTS[8])
                for tag in ("ref", "exact", "all", "all_old", "all2", "all_old2", "all_tf32", "ref2")}

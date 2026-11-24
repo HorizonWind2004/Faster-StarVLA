@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-24T15:16:50.545210</dc:date>
+    <dc:date>2026-11-24T16:23:19.042309</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -40,7 +40,7 @@ Q 32.4 72 32.4 77.76
 L 32.4 249.84 
 Q 32.4 255.6 38.16 255.6 
 z
-" clip-path="url(#pa72599742d)" style="fill: #faf5f5"/>
+" clip-path="url(#p1f2c2d81a5)" style="fill: #faf5f5"/>
    </g>
    <g id="patch_3">
     <path d="M 336.96 255.6 
@@ -53,7 +53,7 @@ Q 331.2 72 331.2 77.76
 L 331.2 249.84 
 Q 331.2 255.6 336.96 255.6 
 z
-" clip-path="url(#pa72599742d)" style="fill: #faf5f5"/>
+" clip-path="url(#p1f2c2d81a5)" style="fill: #faf5f5"/>
    </g>
    <g id="patch_4">
     <path d="M 38.16 453.6 
@@ -66,7 +66,7 @@ Q 32.4 270 32.4 275.76
 L 32.4 447.84 
 Q 32.4 453.6 38.16 453.6 
 z
-" clip-path="url(#pa72599742d)" style="fill: #faf5f5"/>
+" clip-path="url(#p1f2c2d81a5)" style="fill: #faf5f5"/>
    </g>
    <g id="patch_5">
     <path d="M 336.96 453.6 
@@ -79,7 +79,7 @@ Q 331.2 270 331.2 275.76
 L 331.2 447.84 
 Q 331.2 453.6 336.96 453.6 
 z
-" clip-path="url(#pa72599742d)" style="fill: #faf5f5"/>
+" clip-path="url(#p1f2c2d81a5)" style="fill: #faf5f5"/>
    </g>
    <g id="text_1">
     <text style="font-weight: 700; font-size: 17px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #292122" x="32.4" y="38.97668" transform="rotate(-0 32.4 38.97668)">What changed in Faster-StarVLA</text>
@@ -174,7 +174,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="pa72599742d">
+  <clipPath id="p1f2c2d81a5">
    <rect x="0" y="0" width="648" height="475.2"/>
   </clipPath>
  </defs>

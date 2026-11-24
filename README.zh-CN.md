@@ -103,13 +103,11 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | `tf32` | max | fp32 矩阵乘使用 TF32，fp32 动作头的时间主要花在这上面。属于精度设置，所以不在 `all` 里 |
 | `openpi_sdpa` | max | PI0 / PI05：SigLIP 视觉塔和 PaliGemma / 动作专家的联合层改用融合的 scaled-dot-product attention，取代“矩阵乘、fp32 softmax、矩阵乘”；softmax 因此在 bf16 下计算 |
 
-**这个提交时还在跑的：** QwenPI 上 `all` 和 `max` 的统计检验。
-
 每一行都与同一个批处理作业里测的基线比较。同一节点上，不同作业之间同一配方的基线会相差最多 10%，所以不同作业的毫秒数不能直接比，行内的倍数可以比（见[各次测量](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)）。
 
 `exact` 的收益来自 VLM 输入处理和底座本身：这部分占比大的配方收益大（LangForce 每步构建两套 prompt：1.65×），PI0 / PI05 很小（1.08×），因为它们的一步基本就是 PaliGemma 的前向和反向。
 
-flow-matching 动作头跑在 fp32。`condition_once`（属于 `all`）把框架为多个噪声水平复制的条件特征改成每个样本只投影一次。`max` 再让动作头的 fp32 矩阵乘使用 TF32；动作头每一层都要投影 VLM 隐状态的框架，剩下的时间大部分就是这些矩阵乘（QwenPI 976 → 664 ms；QwenPI_v3 1012 → 702 ms；QwenDual 681 → 665 ms）。TF32 是精度设置而不是运算顺序的变化，所以单列一档。评判程序在主配方上判定它统计等价；其他框架在计时的 220 步里 loss 曲线与基线没有可分辨的差别（[数据](docs/faster/measurement.md#tf32)）。
+flow-matching 动作头跑在 fp32。`condition_once`（属于 `all`）把框架为多个噪声水平复制的条件特征改成每个样本只投影一次。`max` 再让动作头的 fp32 矩阵乘使用 TF32；动作头每一层都要投影 VLM 隐状态的框架，剩下的时间大部分就是这些矩阵乘（QwenPI 976 → 664 ms；QwenPI_v3 1012 → 702 ms；QwenDiscreteDiffusion 2062 → 739 ms）。TF32 是精度设置而不是运算顺序的变化，所以单列一档。评判程序在主配方上判定它统计等价；在 QwenPI 上按同样的方法检验（`all` 用 6 个种子、`max` 用 4 个种子），所有端点都在评判程序的 3σ 门限以内，最大的是 2.8σ（`max` 下的动作头更新量），见[详情](docs/faster/measurement.md#the-statistical-gate-on-qwenpi)；其他框架在计时的 220 步里 loss 曲线与基线没有可分辨的差别（[数据](docs/faster/measurement.md#tf32)）。
 
 Qwen2.5-VL 的配方默认用 flash-attention 加载底座。`exact` 保留 flash-attention，只启用与注意力实现无关的路径。`all` 先把底座切到 PyTorch 的 scaled-dot-product attention（`sdpa`），之后针对 SDPA 的路径和编译层才能生效：QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms。
 

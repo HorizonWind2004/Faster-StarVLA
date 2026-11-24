@@ -224,13 +224,11 @@ the same job:
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
-**Still running as of this commit:** the statistical check of `all` and `max` on QwenPI.
-
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](#other-frameworks-and-backbones-step-time)).
 
 `exact` gains where the VLM's input processing and the backbone are a large part of the step (LangForce builds two prompts per step: 1.65×) and little on PI0 / PI05 (1.08×), whose step is the PaliGemma forward and backward itself.
 
-The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 976 → 664 ms; QwenPI_v3 1012 → 702 ms; QwenDual 681 → 665 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent, and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](#tf32)).
+The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 976 → 664 ms; QwenPI_v3 1012 → 702 ms; QwenDiscreteDiffusion 2062 → 739 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent; the same test on QwenPI (`all` on 6 seeds and `max` on 4 seeds) finds every endpoint within the judge's limit of 3σ, the largest being 2.8σ (action head update size with `max`) ([details](#the-statistical-gate-on-qwenpi)), and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](#tf32)).
 
 The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms.
 
@@ -267,6 +265,25 @@ by chance as well; `exact` is bitwise identical to the baseline and shows how mu
 | QwenGR00T | Qwen2.5-VL-3B | 8 | 0.8066 ± 0.018 | 0.8082 ± 0.018 | 0.8021 ± 0.018 | 0.8043 ± 0.018 |
 | PI0 | PaliGemma (openpi) | 9 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.008889 ± 0.00043 | 0.0089 ± 0.00043 |
 | PI05 | PaliGemma (openpi) | 9 | 0.07843 ± 0.0012 | 0.07843 ± 0.0012 | 0.07842 ± 0.0012 | 0.07842 ± 0.0012 |
+
+### The statistical gate on QwenPI
+
+The judge's statistical gate is frozen on the headline recipe, whose action head is a small MLP. `coverage/stat_gate.py` runs the same comparison with the judge's own recorder, trajectory case (60 training steps in deterministic mode, the recipe's periodic evaluation included) and endpoints, for QwenPI, whose head is an fp32 DiT: upstream on 6 seeds gives the seed-to-seed standard deviation σ of every endpoint, and a candidate is compared with upstream on the same seeds. The judge's criterion is that the mean same-seed difference stays within 3σ on every endpoint.
+
+| Endpoint | Upstream, 6 seeds: mean (σ) | `exact`, seed 0: same-seed difference | upstream again, seeds 0, 1: same-seed difference | `all`, 6 seeds: mean same-seed difference (unpaired: difference of means, permutation p) | `max`, 4 seeds: mean same-seed difference (unpaired: difference of means, permutation p) |
+|---|---:|---:|---:|---:|---:|
+| training loss, steps 20-40 | 10.94 (3.9) | -3.26σ **beyond 3σ** | -1.11σ | -0.85σ (-0.85σ, p = 0.16) | -0.73σ (-0.27σ, p = 0.69) |
+| training loss, steps 40-60 | 1.467 (0.24) | -1.11σ | -1.16σ | -0.37σ (-0.37σ, p = 0.52) | -0.67σ (-0.25σ, p = 0.69) |
+| loss on a held-out batch, steps 50-60 | 1.236 (0.069) | -1.76σ | -0.64σ | +0.17σ (+0.17σ, p = 0.96) | -0.59σ (-0.04σ, p = 0.97) |
+| action head update size, steps 10-60 | 6.734e-06 (1.5e-07) | +1.65σ | +1.79σ | +1.69σ (+1.69σ, p = 0.06) | +2.80σ (+2.40σ, p = 0.01) |
+| VLM update size, steps 10-60 | 8.68e-07 (2.2e-08) | -0.99σ | +0.77σ | +0.73σ (+0.73σ, p = 0.39) | +1.28σ (+1.45σ, p = 0.60) |
+| action head update size, steps 1-6 | 2.806e-05 (1.1e-08) | -5.97σ **beyond 3σ** | -0.10σ | -0.45σ (-0.45σ, p = 0.74) | +0.72σ (+0.91σ, p = 0.17) |
+| VLM update size, steps 1-6 | 2.807e-06 (2.1e-09) | -6.98σ **beyond 3σ** | -1.28σ | -1.31σ (-1.31σ, p = 0.41) | -0.23σ (-0.07σ, p = 0.92) |
+
+- **Upstream does not reproduce itself on a seed.** A second run of upstream on seeds 0, 1 differs from the first by -2.8σ to +2.1σ on single endpoints and seeds (training loss of steps 20 to 40 on seed 0: -2.8σ; action head update size: +1.8σ and +1.8σ). Upstream is as far from itself as the candidates are from it. The cause is known from the bitwise checks: the fused scaled-dot-product-attention kernels in the action head have a non-deterministic backward, and the first steps of this framework have losses in the thousands that change by a factor of several from step to step, so a last-bit difference grows to a different trajectory within a few steps.
+- **`exact` departs from upstream at the same step as upstream's own second run.** On seed 0 all three runs have the same loss in the first two steps, to the last digit; in the third step upstream's second run and `exact` both differ from the first run in the fourth digit, and in the fifth step the three losses are 4,144 (first run), 10,320 (second run) and 24,398 (`exact`). On one seed `exact` is therefore "different" by the same-seed criterion, although every step of it is bitwise identical to upstream's when the kernels are deterministic (the bitwise checks below).
+- **With the seeds pooled, the judge's criterion is met.** `all` (6 seeds): equivalent, -1.31σ to +1.69σ; `max` (4 seeds): equivalent, -0.73σ to +2.80σ. The three loss endpoints show no difference in either comparison. The largest value is the action head's update size over steps 10 to 60, which is +3.7% with `all`, +5.2% with `max` (σ is 2.2% of the mean); upstream's own second run is +1.79σ on the same endpoint. Its unpaired p-values are the smallest of the table and are not corrected for the 14 comparisons made.
+- A single seed, which is what the judge runs on the headline recipe, is not enough here: the first `all` run on seed 0 had one endpoint at -3.2σ (the loss of steps 20 to 40, lower than upstream's, whose seed 0 is the highest of its six).
 
 ### How far a rounding-level path moves one training step
 

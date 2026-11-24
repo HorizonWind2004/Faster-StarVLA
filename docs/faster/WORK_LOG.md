@@ -264,3 +264,17 @@ jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measure
 - Session 10, the judge on the final commit (`8427140`): `all` against the frozen timing PASS, tier N1 (3,227 of
   23,336 tensors bitwise, the statistical gate equivalent; 426.4 ms); `exact` PASS, tier N0 (23,336 of 23,336; 498.0
   ms). No baseline was timed in this job.
+- The judge's statistical gate on a framework with an fp32 head (`coverage/stat_gate.py`: the judge's recorder,
+  trajectory case and endpoints with `--framework.name QwenPI`; sessions 10 to 12). Upstream on six seeds for the
+  spread. `all` on seed 0 alone: "different", one endpoint of seven at -3.2 sigma (loss of steps 20-40: 4.5 against
+  upstream's 17.2 on that seed, the highest of its six). Then `exact` on seed 0: also "different" (-3.3 sigma on the
+  same endpoint), although its first two steps are bitwise identical to upstream's on both ranks; by step 4 the loss
+  is 24,398 against 4,144. Control, upstream a second time on seeds 0 and 1: single differences from -2.8 to +2.1
+  sigma. Upstream QwenPI does not reproduce itself on a seed (non-deterministic backward of the fused SDPA kernels in
+  the head, and losses in the thousands in the first steps), so one same-seed comparison says nothing here.
+  With the seeds pooled, the judge's criterion (mean same-seed difference within 3 sigma on every endpoint) holds:
+  `all` on six seeds -1.31 to +1.69 sigma, `max` on four seeds -0.73 to +2.80 sigma. The largest is the action head's
+  update size over steps 10-60 (+3.7% with `all`, +5.2% with `max`; upstream's own second run: +1.79 sigma). The loss
+  endpoints show nothing.
+- Found on the way: my first version of that script stopped at the first "different" verdict (the comparison tool
+  exits non-zero), so `max` did not run in session 10.
