@@ -12,7 +12,8 @@ other field of the output is exactly what upstream returns, including whichever 
 hidden_states[-1]. `logits` is computed on first access, so a caller that does read it still gets the upstream
 value. Calls with labels, or without output_hidden_states=True, are untouched.
 
-Applies to every backbone whose model has an `lm_head`.
+Applies to every backbone whose model has an `lm_head`. If the first such call fails without the head (a wrapper that
+post-processes its logits), the default forward is used from then on.
 """
 
 
@@ -46,7 +47,7 @@ def apply(vlm):
     if getattr(model, "_starvla_hidden_only", False):
         return True
     upstream_forward, upstream_head = model.forward, lm_head.forward
-    call = {"skip": False, "head_input": None}
+    call = {"skip": False, "head_input": None, "works": None}  # works: None until the first such call has run
 
     def head_forward(hidden_states, *args, **kwargs):
         if not call["skip"]:
@@ -62,12 +63,24 @@ def apply(vlm):
         )
         if not hidden_only:
             return upstream_forward(*args, **kwargs)
+        if call["works"] is False:
+            return upstream_forward(*args, **kwargs)
         call["skip"] = True
         try:
             outputs = upstream_forward(*args, **kwargs)
+        except Exception as error:
+            if call["works"]:  # it has worked before: this is the caller's error
+                raise
+            call["skip"], call["works"] = False, False  # a wrapper that needs its logits: leave it alone from now on
+            print(f"[starVLA.fast] hidden_only: {type(model).__name__} cannot run without its language-model head "
+                  f"({type(error).__name__}: {error}); using the default forward", flush=True)
+            return upstream_forward(*args, **kwargs)
         finally:
             call["skip"] = False
         head_input, call["head_input"] = call["head_input"], None
+        if head_input is None:  # the head was not called: nothing was skipped, nothing to add
+            return outputs
+        call["works"] = True
         return HiddenOnlyOutput(outputs, upstream_head, head_input)
 
     lm_head.forward = head_forward

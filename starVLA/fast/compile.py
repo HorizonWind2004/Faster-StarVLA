@@ -14,7 +14,7 @@ import gc
 
 import torch
 
-_gc = {"layers": 0, "calls": 0, "frozen": False}
+_gc = {"layers": 0, "calls": 0, "frozen": False, "reported": False}
 _FREEZE_AFTER_STEPS = 4  # training forwards before the freeze
 
 
@@ -29,15 +29,33 @@ def _raise_cache_limits(entries):
 
 
 def _compiled_for_training(eager, dynamic):
+    # Random operations (the dropout of the DiT action heads) keep eager's kernels and generator: without this,
+    # compiled dropout draws its masks from Inductor's own random stream, so a compiled step uses other masks than
+    # the default step. Only random operations are affected.
+    import torch._inductor.config
+
+    torch._inductor.config.fallback_random = True
     compiled = torch.compile(eager, dynamic=dynamic)
+    state = {"works": None}  # None until the first compiled call has returned
 
     def call(*args, **kwargs):
-        if torch.is_grad_enabled():
+        if not torch.is_grad_enabled() or state["works"] is False:
+            return eager(*args, **kwargs)
+        try:
             out = compiled(*args, **kwargs)
-            if not _gc["frozen"]:
-                _freeze_compiler_objects()
-            return out
-        return eager(*args, **kwargs)
+        except Exception as error:
+            if state["works"]:  # it has worked before: this is the caller's error
+                raise
+            state["works"] = False  # a module the compiler cannot handle stays eager
+            if not _gc["reported"]:
+                _gc["reported"] = True
+                print(f"[starVLA.fast] compile: a layer could not be compiled and runs as before "
+                      f"({type(error).__name__}: {str(error)[:200]})", flush=True)
+            return eager(*args, **kwargs)
+        state["works"] = True
+        if not _gc["frozen"]:
+            _freeze_compiler_objects()
+        return out
 
     return call
 
@@ -76,11 +94,15 @@ def _modules(vlm, path):
     return target
 
 
-def _apply(vlm, path, dynamic=True):
+def _apply(vlm, paths, dynamic=True):
+    """Compile the layers at the first of `paths` (dotted attribute paths from the interface) that exists."""
     from starVLA.fast import attention_implementation
 
-    layers = _modules(vlm, path)
-    if layers is None or len(layers) == 0:
+    for path in paths:
+        layers = _modules(vlm, path)
+        if isinstance(layers, torch.nn.ModuleList) and len(layers):
+            break
+    else:
         return False
     # Dynamo cannot trace the flash-attn extension call: those layers stay eager
     owner = _modules(vlm, path.rsplit(".", 1)[0])
@@ -93,14 +115,25 @@ def _apply(vlm, path, dynamic=True):
 
 
 def apply_lm(vlm):
-    """Compile the decoder layers of the backbone's language model (`model.model.language_model.layers`)."""
-    return _apply(vlm, "model.model.language_model.layers")
+    """Compile the decoder layers of the backbone's language model: `model.model.language_model.layers` in the
+    Qwen-VL and Gemma families; the other places are where other Hugging Face multimodal wrappers keep them."""
+    return _apply(vlm, ("model.model.language_model.layers", "model.language_model.model.layers",
+                        "model.language_model.layers"))
 
 
 def apply_vision(vlm):
-    """Compile the blocks of the backbone's vision tower (`model.model.visual.blocks`). Meant to be used with
-    vision_attn, whose per-layer code has no host reads."""
-    return _apply(vlm, "model.model.visual.blocks")
+    """Compile the blocks of the backbone's vision tower: `model.model.visual.blocks` in the Qwen-VL family (meant to
+    be used with vision_attn, whose per-layer code has no host reads), the encoder layers of a SigLIP / CLIP style
+    tower elsewhere."""
+    return _apply(vlm, ("model.model.visual.blocks", "model.model.vision_tower.vision_model.encoder.layers",
+                        "model.vision_tower.vision_model.encoder.layers", "model.model.vision_tower.encoder.layers"))
+
+
+def apply_world_model(backbone):
+    """Compile the transformer blocks of a video world model used as the backbone (`transformer.blocks` in the Wan
+    and Cosmos-Predict2 interfaces). Hidden states are read by hooks on the blocks, which stay outside the compiled
+    forward."""
+    return _apply(backbone, ("transformer.blocks", "transformer.transformer_blocks"))
 
 
 def apply_head(framework):

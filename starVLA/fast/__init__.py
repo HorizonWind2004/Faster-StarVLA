@@ -10,7 +10,7 @@ A fast path belongs to no framework and no backbone. Each one checks the model i
 does not apply, so the same setting works for every recipe; `accelerate_backbone` prints what it turned on. The
 callers are four hooks, none of them in a framework:
 
-    get_vlm_model()            -> fast.accelerate_backbone(vlm)       every backbone interface
+    get_vlm_model()            -> fast.accelerate_backbone(vlm)       every backbone interface (get_world_model() too)
     build_framework()          -> fast.accelerate_framework(model)    the framework as a whole (action head, precision)
     the trainer                -> fast.accelerate_engine(engine)      the DeepSpeed engine
     build_dataloader()         -> fast.worker_collate(cfg, collate)   the data-loader workers (worker_prep, worker_examples)
@@ -63,6 +63,9 @@ FAST_PATHS = {  # applied in this order
     "unit_clip": FastPath(True, "engine", "deepspeed:skip_unit_clip",
                           "DeepSpeed ZeRO-2 step: no pass over the gradient to multiply it by a clipping factor of "
                           "exactly 1"),
+    "adamw_compiled": FastPath(False, "engine", "optimizer:apply",
+                               "the AdamW update of the flat ZeRO-2 partitions as one Inductor-compiled pass instead "
+                               "of torch's fused kernel"),
     "grad_cast": FastPath(True, "engine", "deepspeed:cast_while_flattening",
                           "DeepSpeed ZeRO-2 step: the partition's gradients are cast to fp32 while they are "
                           "flattened, in one pass instead of two"),
@@ -74,6 +77,9 @@ FAST_PATHS = {  # applied in this order
     "compile_vision": FastPath(False, "backbone", "compile:apply_vision",
                                "vision blocks compiled with Inductor for training calls",
                                ("STARVLA_COMPILE_VISION",)),
+    "compile_world_model": FastPath(False, "backbone", "compile:apply_world_model",
+                                    "transformer blocks of a video world-model backbone (Wan, Cosmos-Predict2) "
+                                    "compiled with Inductor for training calls"),
     "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),
@@ -88,9 +94,6 @@ FAST_PATHS = {  # applied in this order
     "openpi_compile": FastPath(False, "framework", "openpi:compile_layers",
                                "PI0 / PI05: SigLIP layers and the joint PaliGemma / action-expert layers compiled "
                                "with Inductor for training calls"),
-    # not measured against torch's fused kernel in training yet; selectable by name only
-    "adamw_compiled": FastPath(False, "engine", "optimizer:apply",
-                               "the AdamW update of the flat ZeRO-2 partitions as one Inductor-compiled pass"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
@@ -104,7 +107,7 @@ FAST_PATHS = {  # applied in this order
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
 PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
-BY_NAME_ONLY = frozenset({"reduce_to_owner", "adamw_compiled"})
+BY_NAME_ONLY = frozenset({"reduce_to_owner"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
     "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY | PRECISION),

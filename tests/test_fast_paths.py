@@ -153,7 +153,7 @@ def _check_flash_attention():
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
                        "compile_lm", "compile_vision"], applied
-    assert skipped == ["worker_prep"] and _implementations(model) == {"sdpa"}
+    assert skipped == ["worker_prep", "compile_world_model"] and _implementations(model) == {"sdpa"}, skipped
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
     print(f"ok flash-attention: kept at the exact level, SDPA at the all level ({', '.join(applied)})")
@@ -338,6 +338,87 @@ def test_cast_while_flattening():
     print("ok skip_unit_clip: the gradient is identical with and without clipping")
 
 
+def test_compile_fallbacks():
+    """compile_world_model finds the blocks of a world-model backbone; a layer the compiler cannot handle runs eagerly
+    instead of failing the step; hidden_only falls back to the default forward for a wrapper that needs its logits."""
+    import torch
+
+    from starVLA.fast import compile as regional
+    from starVLA.fast import hidden_only
+
+    class Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 4)
+
+        def forward(self, x):
+            return self.linear(x)
+
+    class World(torch.nn.Module):
+        def __init__(self, name):
+            super().__init__()
+            self.transformer = torch.nn.Module()
+            setattr(self.transformer, name, torch.nn.ModuleList([Block(), Block()]))
+
+    for name in ("blocks", "transformer_blocks"):
+        assert regional.apply_world_model(World(name)), name
+    assert not regional.apply_world_model(torch.nn.Linear(2, 2))
+
+    def broken(x):  # the first compiled call fails: from then on the eager forward runs
+        raise RuntimeError("cannot compile this")
+
+    original_compile = torch.compile
+    torch.compile = lambda function, **kwargs: broken
+    try:
+        call = regional._compiled_for_training(lambda x: x + 1, dynamic=True)
+    finally:
+        torch.compile = original_compile
+    x = torch.zeros(2, requires_grad=True)
+    assert torch.equal(call(x), x + 1) and torch.equal(call(x), x + 1)
+
+    class Wrapper(torch.nn.Module):  # post-processes its logits: cannot run without the head
+        def __init__(self):
+            super().__init__()
+            self.lm_head = torch.nn.Linear(4, 3)
+
+        def forward(self, x, output_hidden_states=False, labels=None, return_dict=True):
+            logits = self.lm_head(x)
+            return {"logits": logits.softmax(-1), "hidden_states": (x,)}
+
+    vlm = torch.nn.Module()
+    vlm.model = Wrapper()
+    assert hidden_only.apply(vlm)
+    x = torch.randn(2, 4)
+    out = vlm.model(x, output_hidden_states=True)
+    assert torch.equal(out["logits"], Wrapper.forward(vlm.model, x)["logits"])
+    print("ok compile and hidden_only fallbacks; compile_world_model finds Wan / Cosmos-Predict2 blocks")
+
+
+def test_adamw_compiled():
+    """The written-out AdamW update follows torch.optim.AdamW to rounding over several steps (eager here; on the GPU it
+    is compiled), and the path does not apply to anything but a fused torch AdamW."""
+    import torch
+
+    from starVLA.fast import optimizer
+
+    lr, betas, eps, decay = 2.5e-5, (0.9, 0.95), 1e-8, 1e-8
+    torch.manual_seed(0)
+    reference = torch.nn.Parameter(torch.randn(4096) * 0.02)
+    ours, m, v, step = reference.detach().clone(), torch.zeros(4096), torch.zeros(4096), torch.zeros(())
+    adamw = torch.optim.AdamW([reference], lr=lr, betas=betas, eps=eps, weight_decay=decay)
+    for _ in range(5):
+        gradient = torch.randn(4096) * 1e-3
+        reference.grad = gradient.clone()
+        adamw.step()
+        step += 1
+        t = step.double()
+        optimizer._adamw(ours, gradient, m, v, 1 - lr * decay, betas[0], betas[1], lr / (1 - betas[0] ** t),
+                         (1 - betas[1] ** t).sqrt(), eps)
+    assert ((ours - reference.detach()).abs() / reference.detach().abs().clamp_min(1e-30)).max() < 1e-5
+    assert not optimizer.apply(object())
+    print("ok adamw_compiled: the update follows torch's AdamW to rounding over 5 steps")
+
+
 def test_condition_once():
     _in_subprocess("condition_once")
 
@@ -432,4 +513,6 @@ if __name__ == "__main__":
         test_flash_attention_backbone()
         test_condition_once()
         test_cast_while_flattening()
+        test_compile_fallbacks()
+        test_adamw_compiled()
         test_worker_prep()

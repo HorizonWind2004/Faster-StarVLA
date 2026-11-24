@@ -262,7 +262,14 @@ def apply(interface):
         return True
     try:
         builder = Builder(interface)
-        if not _probe(interface, builder):
+        try:
+            works = _probe(interface, builder)
+        except Exception:
+            works = False
+        if not works and builder.rope is not None:  # position ids this model derives differently: only the processor
+            builder.rope = None
+            works = _probe(interface, builder)
+        if not works:
             return False
     except Exception as error:  # an interface that builds its inputs differently: leave it alone
         print(f"[starVLA.fast] worker_prep: {type(interface).__name__} not supported ({type(error).__name__}: {error})",

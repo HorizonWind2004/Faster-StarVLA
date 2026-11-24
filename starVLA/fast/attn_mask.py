@@ -19,12 +19,12 @@ import sys
 import torch
 from transformers import masking_utils
 
-_installed = False
+_installed = None  # None: not tried; True / False: registered or found to disagree
 
 
 def install():
     global _installed
-    if _installed:
+    if _installed is not None:
         return
     original = masking_utils.ALL_MASK_ATTENTION_FUNCTIONS["sdpa"]
 
@@ -47,9 +47,33 @@ def install():
             mask = mask & padding_mask[:, kv_arange][:, None, None, :].to(mask.device)  # padding_mask_function
         return mask.expand(batch_size, 1, q_length, kv_length).contiguous()
 
+    if not _agrees(sdpa_mask, original):  # another transformers version may build the mask differently
+        _installed = False
+        return
     sdpa_mask._starvla_original = original
     masking_utils.AttentionMaskInterface.register("sdpa", sdpa_mask)
     _installed = True
+
+
+def _agrees(ours, theirs):
+    """The direct builder returns what the installed transformers returns, on padded and unpadded batches, with and
+    without a key / value offset. Any exception counts as disagreement."""
+    try:
+        for batch, queries, offset, padded in ((3, 7, 0, True), (2, 5, 0, False), (2, 4, 3, True), (1, 1, 6, True)):
+            kv_length = queries + offset
+            attention_mask = torch.ones(batch, kv_length, dtype=torch.long)
+            if padded:
+                attention_mask[0, :2] = 0
+                attention_mask[-1, -1:] = 0 if batch > 1 else 1
+            arguments = dict(batch_size=batch, cache_position=torch.arange(offset, offset + queries), kv_length=kv_length,
+                             kv_offset=0, attention_mask=attention_mask)
+            for skip in (True, False):
+                a, b = ours(allow_is_causal_skip=skip, **arguments), theirs(allow_is_causal_skip=skip, **arguments)
+                if (a is None) != (b is None) or (a is not None and not (a.shape == b.shape and torch.equal(a, b))):
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def apply(vlm):
@@ -64,4 +88,4 @@ def apply(vlm):
     if attention_implementation(language_model, model) != "sdpa":  # the other implementations use other builders
         return False
     install()
-    return True
+    return bool(_installed)
