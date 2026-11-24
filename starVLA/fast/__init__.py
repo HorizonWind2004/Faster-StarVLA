@@ -68,6 +68,7 @@ FAST_PATHS = {  # applied in this order
     "adamw_compiled": FastPath(False, "engine", "optimizer:apply",
                                "the AdamW update of the flat ZeRO-2 partitions as one Inductor-compiled pass instead "
                                "of torch's fused kernel"),
+    # measured on the headline recipe: no difference beyond run-to-run noise (session 11); selectable by name only
     "grad_cast": FastPath(True, "engine", "deepspeed:cast_while_flattening",
                           "DeepSpeed ZeRO-2 step: the partition's gradients are cast to fp32 while they are "
                           "flattened, in one pass instead of two"),
@@ -109,7 +110,7 @@ FAST_PATHS = {  # applied in this order
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
 PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
-BY_NAME_ONLY = frozenset({"reduce_to_owner", "unit_clip"})
+BY_NAME_ONLY = frozenset({"reduce_to_owner", "unit_clip", "grad_cast"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
     "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY | PRECISION),

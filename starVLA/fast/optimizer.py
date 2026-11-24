@@ -10,7 +10,8 @@ tensors goes to torch's own kernel as before.
 The arithmetic is the same formula in fp32 in a different order of operations, so results differ in rounding (as
 torch's own foreach and fused implementations differ from each other). On a B300, for one partition of 2.25 billion
 elements, torch's fused kernel took 104.9 ms and the compiled one 9.4 ms, which is the time to read and write the
-four tensors once (coverage/optimizer_probe.py).
+four tensors once (coverage/optimizer_probe.py). In training, on the headline recipe with STARVLA_FAST=all, the step
+went from 422.6 / 410.8 ms to 299.9 / 310.3 ms (two runs each, alternating, one job).
 """
 import torch
 
