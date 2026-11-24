@@ -380,6 +380,53 @@
     "ref_a:frozen_band",
     "ref_b:frozen_band"
    ]
+  },
+  {
+   "name": "released commit, all",
+   "what": "STARVLA_FAST=all, against the frozen timing",
+   "job": "72879",
+   "session": 10,
+   "node": null,
+   "mode": "check",
+   "status": "PASS",
+   "tier": "N1",
+   "switches": {
+    "STARVLA_FAST": "all"
+   },
+   "tree_digest": "62e3047140b7c1778a4779d6f5f5e1321286dafc040a36eaaed3c66fb497a794",
+   "started": "2026-11-24T14:05:14.597454",
+   "reference_step_ms": 906.864908257412,
+   "reference_runs_ms": null,
+   "reference_is_frozen": true,
+   "candidate_step_ms": 426.4460602049803,
+   "speedup": 2.126564161060623,
+   "invalid": null,
+   "tensors": 23336,
+   "tensors_identical": 3227,
+   "max_abs_sigma": 0.9455334753984094
+  },
+  {
+   "name": "released commit, exact",
+   "what": "STARVLA_FAST=exact",
+   "job": "72879",
+   "session": 10,
+   "node": null,
+   "mode": "check",
+   "status": "PASS",
+   "tier": "N0",
+   "switches": {
+    "STARVLA_FAST": "exact"
+   },
+   "tree_digest": "62e3047140b7c1778a4779d6f5f5e1321286dafc040a36eaaed3c66fb497a794",
+   "started": "2026-11-24T14:43:32.037659",
+   "reference_step_ms": 906.864908257412,
+   "reference_runs_ms": null,
+   "reference_is_frozen": true,
+   "candidate_step_ms": 497.96014939995075,
+   "speedup": 1.8211596035349364,
+   "invalid": null,
+   "tensors": 23336,
+   "tensors_identical": 23336
   }
  ],
  "coverage": [

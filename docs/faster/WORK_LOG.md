@@ -261,3 +261,6 @@ jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measure
 - Session 10, distance of `openpi_compile` with the corrected script: gradients move by 8.0% (PI0) and 6.8% (PI05),
   cosine 0.997 / 0.998. Five parameters have a gradient only in the compiled step, all exactly zero: the MLP, the
   second norm and the attention output projection of the prefix stream's last layer, which the loss does not use.
+- Session 10, the judge on the final commit (`8427140`): `all` against the frozen timing PASS, tier N1 (3,227 of
+  23,336 tensors bitwise, the statistical gate equivalent; 426.4 ms); `exact` PASS, tier N0 (23,336 of 23,336; 498.0
+  ms). No baseline was timed in this job.

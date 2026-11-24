@@ -192,6 +192,8 @@ were left as they are.
 | all + tf32 (STARVLA_FAST=all,tf32, commit 8332201) | 6 | 906.9 (frozen) | 446.4 | 2.04× against this session's baseline (912.9) | seven endpoints within 1.41σ | PASS (N2) |
 | final tree, exact (STARVLA_FAST=exact, commit e5f7e15) | 8 | 906.9 (frozen) | 490.5 | 1.65× against this session's baseline (811.3) | 23,336 of 23,336 tensors bitwise identical | PASS (N0) |
 | final tree, all (STARVLA_FAST=all, commit e5f7e15, three-process check) | 8 | 811.3 | 413.5 | 1.96× | not reached | INVALID: references outside the frozen band |
+| released commit, all (STARVLA_FAST=all, against the frozen timing) | 10 | 906.9 (frozen) | 426.4 | no baseline was timed in this session | seven endpoints within 0.95σ | PASS (N1) |
+| released commit, exact (STARVLA_FAST=exact) | 10 | 906.9 (frozen) | 498.0 | no baseline was timed in this session | 23,336 of 23,336 tensors bitwise identical | PASS (N0) |
 
 LIBERO with the released checkpoint and the policy servers on the unified code (`STARVLA_FAST=exact`): 97.85% over 2,000 episodes (Spatial 98.0 / Object 99.8 / Goal 99.0 / Long 94.6). The same evaluation harness with the first release's inference variables gave 98.25%; the sampling error of 2,000 episodes at this success rate is about 0.3 points. The harness is a faster LIBERO runner that is not part of this repository.
 
@@ -222,7 +224,7 @@ the same job:
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
-**Still running as of this commit:** the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
+**Still running as of this commit:** the statistical check of `all` and `max` on QwenPI.
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](#other-frameworks-and-backbones-step-time)).
 
