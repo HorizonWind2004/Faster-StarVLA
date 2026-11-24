@@ -114,7 +114,7 @@ baseline of the same job:
 | `openpi_one_pass` | all | PI0 / PI05: the camera views of a batch go through SigLIP in one call instead of one call per view |
 | `adamw_compiled` | all | every framework trained with DeepSpeed ZeRO-2 and torch's fused AdamW: the update of each rank's flat partition as one compiled kernel (torch's fused kernel took 104.9 ms on a 2.25-billion element partition on B300, the compiled one 9.4 ms) |
 | `compile_world_model` | all | the transformer blocks of a video world-model backbone (Wan, Cosmos-Predict2) |
-| `text_longest` | all | Wan: the 4.7 B UMT5 text encoder on the batch's longest instruction instead of 512 padded tokens (upstream zeroes the positions past the instruction afterwards) |
+| `text_longest` | all | Wan: the 4.7 B UMT5 text encoder on the batch's longest instruction instead of 512 padded tokens (upstream zeroes the positions past the instruction afterwards); only while the encoder has no active dropout: evaluation and inference. In training upstream keeps UMT5's dropout on, and the path leaves the encoding as it is |
 | `tf32` | max | TF32 for fp32 matrix products, which is what the fp32 action heads spend their time on. A precision setting, so not part of `all` |
 | `openpi_sdpa` | max | PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul; the softmax then runs in bf16 |
 
@@ -132,7 +132,7 @@ PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `e
 
 Written but not yet measured on GPUs: Qwen3.5 (`vision_attn`, `vision_pos`, `hidden_only` are bitwise identical on a tiny
 model in the CPU test, run with transformers 5), Gemma 4, MiniCPM-V (also inside MiniCPM-RobotManip), Florence-2 and the
-Wan world model (`text_longest`; its CPU test against upstream's text encoding gives the same values). Qwen3.5 and
+Wan world model (`text_longest`, for evaluation and inference; its CPU test against upstream's text encoding gives the same values). Qwen3.5 and
 Gemma 4 need transformers 5; upstream pins 4.57. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
 interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface, which `worker_prep` leaves to the training
 process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only frameworks; and the co-training and VLM trainers

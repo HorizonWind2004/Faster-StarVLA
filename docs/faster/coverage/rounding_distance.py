@@ -7,7 +7,8 @@ named fast paths were applied. Two runs of the default code give the noise floor
         <fast paths, comma separated> <out.json>
 
 CHECK_CONFIG names the training YAML to take the framework's settings from (default: the LIBERO recipe), CHECK_SET
-lists further `key=value` settings, and CHECK_CHECKPOINT a checkpoint to load into the framework (PI0 / PI05, which
+lists further `key=value` settings, and CHECK_ACTION_STEPS / CHECK_ACTION_DIM / CHECK_STATE_DIM the shape of the synthetic actions and states (MiniCPM-RobotManip
+takes 10-D end-effector actions), CHECK_CHECKPOINT a checkpoint to load into the framework (PI0 / PI05, which
 have no backbone directory: pass "-" for it). `attn:eager` in place of the fast paths switches the backbone to
 that attention implementation instead: a change of implementation that is not one of ours, for comparison.
 """
@@ -46,9 +47,10 @@ model = model.cuda().train()
 head = model.config.framework.get('action_model', {})
 rng = np.random.default_rng(0)
 examples = [{
-    'image': [Image.fromarray(rng.integers(0, 255, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
+    'image': [Image.fromarray(rng.integers(0, 255, (224, 224, 3), dtype=np.uint8))
+              for _ in range(int(os.environ.get('CHECK_VIEWS', '2')))],  # Florence-2's interface takes one view
     'lang': ' '.join(['pick up the bowl and place it on the plate'] * (1 + i % 3)),
-    'action': rng.uniform(-1, 1, (int(os.environ.get('CHECK_ACTION_STEPS', '16')), int(head.get('action_dim', 7)))).astype(np.float32),
+    'action': rng.uniform(-1, 1, (int(os.environ.get('CHECK_ACTION_STEPS', '16')), int(os.environ.get('CHECK_ACTION_DIM', head.get('action_dim', 7))))).astype(np.float32),
     'state': rng.uniform(-1, 1, (1, int(os.environ.get('CHECK_STATE_DIM', head.get('state_dim', 7))))).astype(np.float32),
 } for i in range(16)]
 
