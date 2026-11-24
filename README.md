@@ -94,6 +94,7 @@ baseline of the same job:
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
 
 | Fast path | Level | Applies to |
 |---|---|---|
@@ -130,9 +131,11 @@ On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the
 
 PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_compile`; `max` adds `openpi_sdpa`. The whole model already runs in bf16, so TF32 changes nothing there.
 
-Written but not yet measured on GPUs: Qwen3.5 (`vision_attn`, `vision_pos`, `hidden_only` are bitwise identical on a tiny
-model in the CPU test, run with transformers 5), Gemma 4, MiniCPM-V (also inside MiniCPM-RobotManip), Florence-2 and the
-Wan world model (`text_longest`, for evaluation and inference; its CPU test against upstream's text encoding gives the same values). Qwen3.5 and
+New backbones (session 13, still running): Wan2.2-TI2V-5B and Qwen3.5-0.8B are in the table above; on the real Qwen3.5-0.8B
+the `exact` paths leave loss and gradients bitwise identical. Gemma 4, MiniCPM-V (inside MiniCPM-RobotManip) and Florence-2
+are written and CPU-tested, their GPU checks are queued. MiniCPM-RobotManip trains on 10-D end-effector data that is not
+here, and starVLA's Florence-2 interface takes one camera view where the LIBERO recipe gives two: those two get distance
+checks only. `text_longest` (Wan) is for evaluation and inference. Qwen3.5 and
 Gemma 4 need transformers 5; upstream pins 4.57. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
 interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface, which `worker_prep` leaves to the training
 process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only frameworks; and the co-training and VLM trainers

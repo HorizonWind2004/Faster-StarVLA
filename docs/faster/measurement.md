@@ -224,6 +224,7 @@ the same job:
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ | 12 | 70.6 / 70.6 / 59.2 |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — | 12 | 102.5 / 102.5 / 63.0 |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — | 12 | 113.2 / 113.2 / 70.0 |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — | 13 | 155.2 / 155.2 / 139.1 |
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
@@ -269,6 +270,7 @@ by chance as well; `exact` is bitwise identical to the baseline and shows how mu
 | QwenGR00T | Qwen2.5-VL-3B | 12 | 0.8021 ± 0.017 | 0.808 ± 0.018 | 0.8046 ± 0.018 | 0.8041 ± 0.017 |
 | PI0 | PaliGemma (openpi) | 12 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.00889 ± 0.00043 | 0.008895 ± 0.00043 |
 | PI05 | PaliGemma (openpi) | 12 | 0.07843 ± 0.0012 | 0.07843 ± 0.0012 | 0.07841 ± 0.0012 | 0.07841 ± 0.0012 |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | 13 | 0.7208 ± 0.017 | 0.7066 ± 0.016 | 0.7047 ± 0.016 | 0.706 ± 0.016 |
 
 ### Where the time goes, and the paths added after it (session 11)
 
@@ -337,7 +339,7 @@ The judge's statistical gate is frozen on the headline recipe, whose action head
 relative difference of the loss, and the relative difference and cosine of all gradients, by module. Two runs of
 the default code agree exactly (the noise floor is zero), so every number below is caused by the path.
 
-| Change | Framework | Backbone / default attention | Loss | All gradients: relative difference | cosine | Vision tower | Language model | Action head |
+| Change | Framework | Backbone / default attention | Loss | All gradients: relative difference | cosine | Vision tower | Language model (world model for Wan) | Action head |
 |---|---|---|---:|---:|---:|---|---|---|
 | `compile_lm` | QwenGR00T | Qwen2.5-VL-3B / SDPA | 7.4e-06 | 0.2 | 0.980 | 0.32 (cos 0.949) | 0.22 (cos 0.980) | 0.045 (cos 0.999) |
 | `compile_lm` | QwenOFT | Qwen2.5-VL-3B / SDPA | 1.0e-02 | 0.25 | 0.969 | 0.21 (cos 0.979) | 0.28 (cos 0.959) | 0.12 (cos 0.994) |
@@ -362,7 +364,11 @@ the default code agree exactly (the noise floor is zero), so every number below 
 | `compile_head` | QwenAdapter | Qwen3-VL-4B / SDPA | 7.0e-04 | 0.091 | 0.997 | 0.13 (cos 0.998) | 0.061 (cos 0.998) | 0.016 (cos 1.000) |
 | `compile_head` | QwenDiscreteDiffusion | Qwen3-VL-4B / SDPA | 1.9e-06 | 0.066 | 0.998 | 0.042 (cos 0.999) | 0.065 (cos 0.998) | 0.073 (cos 0.997) |
 | `compile_head` | QwenGR00T | Qwen3-VL-4B / SDPA | 1.8e-07 | 0.018 | 1.000 | 0.026 (cos 1.000) | 0.0092 (cos 1.000) | 0.0039 (cos 1.000) |
+| `compile_lm,compile_vision` | QwenGR00T | Qwen3.5-0.8B / SDPA | 1.0e-04 | 0.83 | 0.634 | 1.0 (cos 0.411) | 0.2 (cos 0.981) | 0.099 (cos 0.995) |
+| `hidden_only,vision_attn,vision_pos` | QwenGR00T | Qwen3.5-0.8B / SDPA | 0.0e+00 | 0 | 1.000 | 0 (cos 1.000) | 0 (cos 1.000) | 0 (cos 1.000) |
 | `compile_head` | QwenPI | Qwen3-VL-4B / SDPA | 4.7e-06 | 0.034 | 0.999 | 0.031 (cos 1.000) | 0.032 (cos 1.000) | 0.034 (cos 0.999) |
+| `compile_world_model` | WanGR00T | Wan2.2-TI2V-5B-Diffusers / SDPA | 1.0e-06 | 0.018 | 1.000 | — | 0.035 (cos 0.999) | 0.014 (cos 1.000) |
+| `condition_once,compile_head` | WanGR00T | Wan2.2-TI2V-5B-Diffusers / SDPA | 0.0e+00 | 0.0013 | 1.000 | — | 0.003 (cos 1.000) | 0.00075 (cos 1.000) |
 
 - **One bf16 training step is far more sensitive to rounding than the loss is.** Compiling the decoder layers, which the judge accepts on the headline recipe, moves the language model's gradient by 28% (QwenOFT) and 22% (QwenGR00T), and the loss of that step by 1% and 0.0007%.
 - **The vision tower's one-step gradient is mostly rounding noise.** It is what remains after backpropagation through the whole language model and 32 vision layers in bf16. Compiling the vision blocks leaves it with cosine 0.84 (QwenOFT) and -0.04 (QwenGR00T) to the default one; switching the same backbone from SDPA to eager attention, a change that is not ours and computes the same function, gives 0.55 and -0.09.

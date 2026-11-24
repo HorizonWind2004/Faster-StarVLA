@@ -84,6 +84,7 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 个梯度 + 动作 ✓ |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
 
 | 加速路径 | 档位 | 适用范围 |
 |---|---|---|
@@ -120,8 +121,9 @@ Qwen2.5-VL 用 SDPA 时（bf16、B300），4 个全注意力视觉层（32 张�
 
 PI0 和 PI05 自带 PaliGemma，不走 `get_vlm_model`。它们的 `exact` 是 `worker_examples` 加两条 DeepSpeed 路径；`all` 再加 `unused_views`（LIBERO 只有这类模型所需三个相机视角中的两个，前缀从 816 个 token 缩到 560 个）和 `openpi_compile`；`max` 再加 `openpi_sdpa`。整个模型本来就跑在 bf16，所以 TF32 在这里没有作用。
 
-代码已写、还没上 GPU 实测：Qwen3.5（`vision_attn`、`vision_pos`、`hidden_only` 在 CPU 测试的小模型上逐位一致，用 transformers 5 跑）、
-Gemma 4、MiniCPM-V（包括 MiniCPM-RobotManip 里的那个）、Florence-2，以及 Wan 世界模型（`text_longest`，用于评测和推理，CPU 测试里和原版文本编码结果相同）。
+新底座（第 13 次测量，还在跑）：Wan2.2-TI2V-5B 和 Qwen3.5-0.8B 已经在上表里；在真实的 Qwen3.5-0.8B 上，`exact` 路径的 loss 和梯度逐位一致。
+Gemma 4、MiniCPM-V（MiniCPM-RobotManip 里的那个）、Florence-2 的代码已写、CPU 测试通过，GPU 检查在排队。MiniCPM-RobotManip 训练用的
+10 维末端执行器数据这里没有，starVLA 的 Florence-2 接口只接受一个相机视角而 LIBERO 配方给两个，所以这两个只做距离检查。`text_longest`（Wan）用于评测和推理。
 Qwen3.5 和 Gemma 4 需要 transformers 5，上游固定的是 4.57。没有实测：Molmo2、VILA，以及真实的
 Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑过）；QwenFast（它把标签文本交给接口，`worker_prep` 遇到这种调用会
 留给训练进程处理）、InternVLA-M1 和 ABot-M0；Cosmos-Predict2 和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。

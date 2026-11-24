@@ -344,3 +344,18 @@ The goal's remaining families, written first and checked on CPU; GPU verificatio
 | Cosmos-Predict2 | `compile_world_model` only; its padded T5 outputs depend on the padding length, so `text_longest` does not apply | — |
 
 The pinned environment has transformers 4.57.0 (upstream's pin), which has no Qwen3.5 or Gemma 4; those interfaces need transformers 5.
+
+### Session 13 (jobs 73275 / 73276, tree starVLA_r22 = 60578a1), partial
+
+- Distances on real weights: Qwen3.5-0.8B + GR00T `hidden_only,vision_attn,vision_pos` loss and gradients bitwise
+  identical; `compile_lm,compile_vision` loss 1e-4, language model cos 0.98, vision tower cos 0.41 (the vision tower is
+  as sensitive to any kernel change). Wan2.2-TI2V-5B + GR00T: `compile_world_model` loss 1e-6, cos 0.9998;
+  `condition_once,compile_head` loss identical, cos 1.0000.
+- `text_longest` in training: loss 3.1% apart, cos 0.83 — UMT5's dropout (0.1) is on in upstream training and draws
+  other masks on fewer positions. Fixed (60578a1): the path runs only while the encoder has no active dropout. The
+  measurement of the old code is kept in runs/r22/distance/superseded.
+- Timing, same job: WanGR00T 1584.0 / exact 1590.2 / all 1111.7 (1.42×) / max 1138.2 ms; peak memory 155 → 139 GiB.
+- Setup findings: Gemma 4 cannot load with flash-attention in transformers 5.24 and its audio tower has no SDPA (runs
+  eager; `sdpa` now switches only the sub-models that support it); MiniCPM-RobotManip needs 10-D EE6D data (distances
+  on synthetic samples only); Florence-2's interface takes one view (distances only); the transformers 5 venv needed the
+  distutils shim for DeepSpeed (Qwen3.5 + GR00T timings rerun in 73276).

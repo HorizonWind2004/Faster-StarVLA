@@ -28,12 +28,14 @@ SESSIONS = {
     "73035": {"session": 11, "node": None, "when": "24 Nov, evening", "note": "probes: optimizer, stages, new paths on and off"},
     "73045": {"session": 12, "node": None, "when": "24-25 Nov", "note": "final tree: judge, the whole table, statistical gate"},
     "72879": {"session": 10, "node": None, "when": "24 Nov", "note": "statistical gate on QwenPI; judge on the released commit"},
+    "73275": {"session": 13, "node": None, "when": "25 Nov, morning", "note": "the new backbones: Qwen3.5, Wan (and the distances of Gemma 4, MiniCPM, Florence-2)"},
+    "73276": {"session": 13, "node": None, "when": "25 Nov", "note": "session 13 continued: Gemma 4 (eager), MiniCPM-RobotManip, Florence-2, Qwen3.5 + GR00T"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
 }
 OTHERS = WS / "runs/others"  # session 4
 TF32 = WS / "runs/others_tf32"  # session 5
 ROOTS = {4: OTHERS, 5: TF32, 6: WS / "runs/r13", 7: WS / "runs/r14", 8: WS / "runs/r15", 9: WS / "runs/r16", 10: WS / "runs/r17",
-         11: WS / "runs/r20", 12: WS / "runs/r21"}
+         11: WS / "runs/r20", 12: WS / "runs/r21", 13: WS / "runs/r22"}
 TAGS = ("ref", "exact", "all", "all_tf32")
 Q3, Q25, SDPA, FA2 = "Qwen3-VL-4B", "Qwen2.5-VL-3B", "sdpa", "flash_attention_2"
 COMBO_INFO = {  # run directory -> framework, backbone, attention the config asks for
@@ -42,6 +44,9 @@ COMBO_INFO = {  # run directory -> framework, backbone, attention the config ask
     "adapter_q3": ("QwenAdapter", Q3, SDPA), "langforce_q3": ("LangForce", Q3, SDPA), "dual_q3": ("QwenDual", Q3, SDPA),
     "oft_q25_sdpa": ("QwenOFT", Q25, SDPA), "oft_q25_fa2": ("QwenOFT", Q25, FA2), "gr00t_q25_fa2": ("QwenGR00T", Q25, FA2),
     "pi0": ("PI0", "PaliGemma (openpi)", "eager"), "pi05": ("PI05", "PaliGemma (openpi)", "eager"),
+    # session 13, transformers 5 for Qwen3.5 and Gemma 4 (the attention each recipe ends up with)
+    "q35_gr00t": ("QwenGR00T", "Qwen3.5-0.8B", FA2), "q35_oft": ("QwenOFT", "Qwen3.5-0.8B", FA2),
+    "gemma4_pi": ("Gemma4PI", "Gemma-4-E2B", "eager"), "wan_gr00t": ("WanGR00T", "Wan2.2-TI2V-5B (world model)", SDPA),
 }
 
 
@@ -232,7 +237,7 @@ alternating = {tag: cell for tag, cell in alternating.items() if cell}
 
 # ---- rounding-level paths: distance of one training step from the default step
 distances = []
-for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "distance"), (11, "distance"), (12, "distance")):
+for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "distance"), (11, "distance"), (12, "distance"), (13, "distance")):
     for p in sorted((ROOTS[session] / folder).glob("*.json")):
         d = load(p)
         if d and ("default_vs_fast" in d or "flash_vs_sdpa" in d):

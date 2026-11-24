@@ -66,6 +66,12 @@
    "note": "statistical gate on QwenPI; judge on the released commit",
    "job": "72879"
   },
+  "13": {
+   "node": null,
+   "when": "25 Nov",
+   "note": "session 13 continued: Gemma 4 (eager), MiniCPM-RobotManip, Florence-2, Qwen3.5 + GR00T",
+   "job": "73276"
+  },
   "8": {
    "node": "C",
    "when": "24 Nov",
@@ -1180,6 +1186,61 @@
     "tree_digest": "cda1d06350d1ab41a16c9d4ded7ab4ff0bb530cee24bf37224bc164219b5e98f",
     "mean_loss_steps_100_220": 0.07841058094054461,
     "loss_standard_error_steps_100_220": 0.0012226213472471897
+   }
+  },
+  {
+   "framework": "WanGR00T",
+   "backbone": "Wan2.2-TI2V-5B (world model)",
+   "attention": "sdpa",
+   "combo": "wan_gr00t",
+   "session": 13,
+   "ref": {
+    "step_ms": 1583.971941464697,
+    "window_step_ms": [
+     1580.717749609612,
+     1587.226133319782
+    ],
+    "peak_mem_gib": 155.18044567108154,
+    "gpu_util": 73.5,
+    "tree_digest": "63fdaccf3a0b4db9b94bfd22caebc922340b7c97de5cfba3400cfecf37db6e37",
+    "mean_loss_steps_100_220": 0.7208047327895959,
+    "loss_standard_error_steps_100_220": 0.01666344656956273
+   },
+   "exact": {
+    "step_ms": 1590.2035521046491,
+    "window_step_ms": [
+     1575.3845951100811,
+     1605.0225090992171
+    ],
+    "peak_mem_gib": 155.18044567108154,
+    "gpu_util": 77.2,
+    "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+    "mean_loss_steps_100_220": 0.7066294908523559,
+    "loss_standard_error_steps_100_220": 0.016414249250961063
+   },
+   "all": {
+    "step_ms": 1111.7376342904754,
+    "window_step_ms": [
+     1087.920116360765,
+     1135.5551522201858
+    ],
+    "peak_mem_gib": 139.13927555084229,
+    "gpu_util": 52.8,
+    "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+    "mean_loss_steps_100_220": 0.7047289403776328,
+    "loss_standard_error_steps_100_220": 0.016078424720513705
+   },
+   "all_tf32": {
+    "step_ms": 1138.1691268604482,
+    "window_step_ms": [
+     1126.315691419877,
+     1150.0225623010192
+    ],
+    "peak_mem_gib": 139.13927555084229,
+    "gpu_util": 59.6,
+    "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+    "mean_loss_steps_100_220": 0.7059769456585249,
+    "loss_standard_error_steps_100_220": 0.016060392578232715
    }
   }
  ],
@@ -3567,6 +3628,112 @@
      "loss_standard_error_steps_100_220": 0.0012226213472471897
     }
    }
+  ],
+  "13": [
+   {
+    "framework": "QwenGR00T",
+    "backbone": "Qwen3.5-0.8B",
+    "attention": "flash_attention_2",
+    "combo": "q35_gr00t",
+    "session": 13,
+    "ref": {
+     "step_ms": null,
+     "status": "ERROR",
+     "error": "returncode 1, 0 rank reports (see $WORK/starvla/ws/runs/r22/cov/q35_gr00t/ref.log)"
+    },
+    "exact": {
+     "step_ms": null,
+     "status": "ERROR",
+     "error": "returncode 1, 0 rank reports (see $WORK/starvla/ws/runs/r22/cov/q35_gr00t/exact.log)"
+    },
+    "all": {
+     "step_ms": null,
+     "status": "ERROR",
+     "error": "returncode 1, 0 rank reports (see $WORK/starvla/ws/runs/r22/cov/q35_gr00t/all.log)"
+    },
+    "all_tf32": {
+     "step_ms": null,
+     "status": "ERROR",
+     "error": "returncode 1, 0 rank reports (see $WORK/starvla/ws/runs/r22/cov/q35_gr00t/max.log)"
+    }
+   },
+   {
+    "framework": "QwenOFT",
+    "backbone": "Qwen3.5-0.8B",
+    "attention": "flash_attention_2",
+    "combo": "q35_oft",
+    "session": 13,
+    "ref": {
+     "step_ms": 481.2113766447874,
+     "window_step_ms": [
+      489.98243825975806,
+      472.4403150298167
+     ],
+     "peak_mem_gib": 21.709486484527588,
+     "gpu_util": 20.0,
+     "tree_digest": "63fdaccf3a0b4db9b94bfd22caebc922340b7c97de5cfba3400cfecf37db6e37",
+     "mean_loss_steps_100_220": 0.25523334729174774,
+     "loss_standard_error_steps_100_220": 0.0018540761038551375
+    },
+    "exact": null,
+    "all": null,
+    "all_tf32": null
+   },
+   {
+    "framework": "WanGR00T",
+    "backbone": "Wan2.2-TI2V-5B (world model)",
+    "attention": "sdpa",
+    "combo": "wan_gr00t",
+    "session": 13,
+    "ref": {
+     "step_ms": 1583.971941464697,
+     "window_step_ms": [
+      1580.717749609612,
+      1587.226133319782
+     ],
+     "peak_mem_gib": 155.18044567108154,
+     "gpu_util": 73.5,
+     "tree_digest": "63fdaccf3a0b4db9b94bfd22caebc922340b7c97de5cfba3400cfecf37db6e37",
+     "mean_loss_steps_100_220": 0.7208047327895959,
+     "loss_standard_error_steps_100_220": 0.01666344656956273
+    },
+    "exact": {
+     "step_ms": 1590.2035521046491,
+     "window_step_ms": [
+      1575.3845951100811,
+      1605.0225090992171
+     ],
+     "peak_mem_gib": 155.18044567108154,
+     "gpu_util": 77.2,
+     "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+     "mean_loss_steps_100_220": 0.7066294908523559,
+     "loss_standard_error_steps_100_220": 0.016414249250961063
+    },
+    "all": {
+     "step_ms": 1111.7376342904754,
+     "window_step_ms": [
+      1087.920116360765,
+      1135.5551522201858
+     ],
+     "peak_mem_gib": 139.13927555084229,
+     "gpu_util": 52.8,
+     "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+     "mean_loss_steps_100_220": 0.7047289403776328,
+     "loss_standard_error_steps_100_220": 0.016078424720513705
+    },
+    "all_tf32": {
+     "step_ms": 1138.1691268604482,
+     "window_step_ms": [
+      1126.315691419877,
+      1150.0225623010192
+     ],
+     "peak_mem_gib": 139.13927555084229,
+     "gpu_util": 59.6,
+     "tree_digest": "d06b4f2266452d5dbccd260b16166bac9013f43638b80ca4cf53db23db8e2012",
+     "mean_loss_steps_100_220": 0.7059769456585249,
+     "loss_standard_error_steps_100_220": 0.016060392578232715
+    }
+   }
   ]
  },
  "rounding_distance": [
@@ -4795,6 +4962,144 @@
      "norm": 3562347.478910615,
      "relative_difference": 0.030922797887818154,
      "cosine": 0.9995220430424204
+    }
+   }
+  },
+  {
+   "check": "q35_compile",
+   "session": 13,
+   "framework": "QwenGR00T",
+   "backbone": "Qwen3.5-0.8B",
+   "loaded_with": "sdpa",
+   "paths": "compile_lm,compile_vision",
+   "applied": [
+    "compile_lm",
+    "compile_vision"
+   ],
+   "noise_floor_gradient_relative_difference": 0.0,
+   "loss": [
+    1.3214906454086304,
+    1.3216280937194824
+   ],
+   "loss_relative_difference": 0.00010401005207989884,
+   "gradient_relative_difference": 0.834128205521459,
+   "gradient_cosine": 0.6343396887236252,
+   "by_module": {
+    "action head": {
+     "norm": 0.9933479424206301,
+     "relative_difference": 0.09893787200680526,
+     "cosine": 0.9951387691626417
+    },
+    "language model": {
+     "norm": 3.283077388880767,
+     "relative_difference": 0.1957231360309894,
+     "cosine": 0.9813039852616467
+    },
+    "vision tower": {
+     "norm": 4.519402049601398,
+     "relative_difference": 1.037238306576309,
+     "cosine": 0.4111440153608677
+    }
+   }
+  },
+  {
+   "check": "q35_exact",
+   "session": 13,
+   "framework": "QwenGR00T",
+   "backbone": "Qwen3.5-0.8B",
+   "loaded_with": "sdpa",
+   "paths": "hidden_only,vision_attn,vision_pos",
+   "applied": [
+    "hidden_only",
+    "vision_attn",
+    "vision_pos"
+   ],
+   "noise_floor_gradient_relative_difference": 0.0,
+   "loss": [
+    1.3113332986831665,
+    1.3113332986831665
+   ],
+   "loss_relative_difference": 0.0,
+   "gradient_relative_difference": 0.0,
+   "gradient_cosine": 1.0,
+   "by_module": {
+    "action head": {
+     "norm": 0.6018777411890707,
+     "relative_difference": 0.0,
+     "cosine": 1.0
+    },
+    "language model": {
+     "norm": 2.5054925303905087,
+     "relative_difference": 0.0,
+     "cosine": 1.0
+    },
+    "vision tower": {
+     "norm": 4.538287657048982,
+     "relative_difference": 0.0,
+     "cosine": 1.0
+    }
+   }
+  },
+  {
+   "check": "wan_compile",
+   "session": 13,
+   "framework": "WanGR00T",
+   "backbone": "Wan2.2-TI2V-5B-Diffusers",
+   "loaded_with": "sdpa",
+   "paths": "compile_world_model",
+   "applied": [
+    "compile_world_model"
+   ],
+   "noise_floor_gradient_relative_difference": 0.0,
+   "loss": [
+    1.388335108757019,
+    1.3883336782455444
+   ],
+   "loss_relative_difference": 1.0303790962184315e-06,
+   "gradient_relative_difference": 0.017621239074442487,
+   "gradient_cosine": 0.9998448646658471,
+   "by_module": {
+    "action head": {
+     "norm": 2.087026957661166,
+     "relative_difference": 0.014028156975003106,
+     "cosine": 0.9999020817250164
+    },
+    "world model": {
+     "norm": 0.7282117948008532,
+     "relative_difference": 0.035278390347715065,
+     "cosine": 0.999383187697057
+    }
+   }
+  },
+  {
+   "check": "wan_head",
+   "session": 13,
+   "framework": "WanGR00T",
+   "backbone": "Wan2.2-TI2V-5B-Diffusers",
+   "loaded_with": "sdpa",
+   "paths": "condition_once,compile_head",
+   "applied": [
+    "condition_once",
+    "compile_head"
+   ],
+   "noise_floor_gradient_relative_difference": 0.0,
+   "loss": [
+    1.379899263381958,
+    1.379899263381958
+   ],
+   "loss_relative_difference": 0.0,
+   "gradient_relative_difference": 0.0013484134974485788,
+   "gradient_cosine": 0.999999094397132,
+   "by_module": {
+    "action head": {
+     "norm": 1.5822514452696994,
+     "relative_difference": 0.000754621682502371,
+     "cosine": 0.9999997152966915
+    },
+    "world model": {
+     "norm": 0.6591287856603246,
+     "relative_difference": 0.003002368986777236,
+     "cosine": 0.9999956314705023
     }
    }
   }
