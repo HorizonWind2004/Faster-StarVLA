@@ -93,7 +93,7 @@ baseline of the same job:
 | QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ |
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 956.3 | 755.6 (1.27×) | 554.7 (1.72×) | 546.9 (1.75×) | 1,072 gradients + actions ✓ |
 | PI0 | PaliGemma (openpi) | eager | 636.9 | 591.8 (1.08×) | 453.6 (1.40×) | 443.3 (1.44×) | — |
-| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | — | — | — |
+| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | 468.6 (1.42×) | 465.1 (1.43×) | — |
 
 | Fast path | Level | Applies to |
 |---|---|---|
@@ -113,7 +113,7 @@ baseline of the same job:
 | `tf32` | max | TF32 for fp32 matrix products, which is what the fp32 action heads spend their time on. A precision setting, so not part of `all` |
 | `openpi_sdpa` | max | PI0 / PI05: fused scaled-dot-product attention in the SigLIP tower and the joint PaliGemma / action-expert layers instead of matmul, fp32 softmax, matmul; the softmax then runs in bf16 |
 
-**Still running as of this commit:** PI05 with `all` and `max`; the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
+**Still running as of this commit:** the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)).
 

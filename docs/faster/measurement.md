@@ -218,11 +218,11 @@ the same job:
 | QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ | 6 | 63.2 / 63.2 / 55.3 |
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 956.3 | 755.6 (1.27×) | 554.7 (1.72×) | 546.9 (1.75×) | 1,072 gradients + actions ✓ | 8 | 70.6 / 70.6 / 59.9 |
 | PI0 | PaliGemma (openpi) | eager | 636.9 | 591.8 (1.08×) | 453.6 (1.40×) | 443.3 (1.44×) | — | 9 | 102.5 / 102.5 / 63.0 |
-| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | — | — | — | 9 | 113.2 / 113.2 / — |
+| PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | 468.6 (1.42×) | 465.1 (1.43×) | — | 9 | 113.2 / 113.2 / 70.0 |
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
-**Still running as of this commit:** PI05 with `all` and `max`; the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
+**Still running as of this commit:** the statistical check of `all` and `max` on QwenPI; the judge on this commit (its last complete run was two commits earlier; since then the PI0 / PI05 module, the level definitions and the helper shared by the compile paths changed).
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](#other-frameworks-and-backbones-step-time)).
 
@@ -241,6 +241,8 @@ them: the same recipe, code and command line gave, for example, QwenGR00T + Qwen
 every session is in `docs/faster/results/unified/coverage.json` (`timing_by_session`).
 
 The headline recipe with `all` ran at 425 ms in session 4 and at 464 ms in session 6 (baselines 904 and 913 ms), with the same fast paths applied to that recipe by both trees. In session 8 the final tree and the tree of session 4 were run alternately in one job: final tree 420.8 and 414.6 ms, session 4 tree 426.2 and 427.1 ms, baseline 801.8 ms at the start of the series and 807.0 ms at its end.
+
+PI0 and PI05 in session 9, `all` and `max` alternating in one job (what `max` adds there is `openpi_sdpa`; TF32 has nothing to act on in a model that runs in bf16). PI0: baseline 636.9 ms, `exact` 591.8, `all` 453.6 and 452.2, `max` 443.3 and 439.8 (peak memory 102.5 / 63.0 / 57.2 GiB for baseline / `all` / `max`). PI05: baseline 666.5 ms, `exact` 626.9, `all` 468.6 and 475.0, `max` 465.1 and 463.8 (peak memory 113.2 / 70.0 / 63.2 GiB for baseline / `all` / `max`).
 
 ### TF32
 
@@ -262,6 +264,7 @@ by chance as well; `exact` is bitwise identical to the baseline and shows how mu
 | QwenDual | Qwen3-VL-4B | 8 | 1.003 ± 0.0085 | 0.9847 ± 0.0095 | 1.005 ± 0.0076 | 0.9589 ± 0.0095 |
 | QwenGR00T | Qwen2.5-VL-3B | 8 | 0.8066 ± 0.018 | 0.8082 ± 0.018 | 0.8021 ± 0.018 | 0.8043 ± 0.018 |
 | PI0 | PaliGemma (openpi) | 9 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.008889 ± 0.00043 | 0.0089 ± 0.00043 |
+| PI05 | PaliGemma (openpi) | 9 | 0.07843 ± 0.0012 | 0.07843 ± 0.0012 | 0.07842 ± 0.0012 | 0.07842 ± 0.0012 |
 
 ### How far a rounding-level path moves one training step
 
@@ -286,6 +289,8 @@ the default code agree exactly (the noise floor is zero), so every number below 
 | `condition_once` | QwenPI | Qwen3-VL-4B / SDPA | 0.0e+00 | 0.0042 | 1.000 | 0.0099 (cos 1.000) | 0.0045 (cos 1.000) | 1.4e-06 (cos 1.000) |
 | `unused_views` | PI0 | PaliGemma (openpi) / eager | 1.0e-03 | 0.03 | 1.000 | 0.031 (cos 1.000) | 0.032 (cos 0.999) | 0.023 (cos 1.000) |
 | `unused_views` | PI05 | PaliGemma (openpi) / eager | 9.9e-04 | 0.025 | 1.000 | 0.04 (cos 0.999) | 0.023 (cos 1.000) | 0.021 (cos 1.000) |
+| `openpi_compile` | PI0 | PaliGemma (openpi) / eager | 2.4e-03 | 0.08 | 0.997 | 0.12 (cos 0.993) | 0.066 (cos 0.998) | 0.051 (cos 0.999) |
+| `openpi_compile` | PI05 | PaliGemma (openpi) / eager | 1.2e-03 | 0.068 | 0.998 | 0.13 (cos 0.992) | 0.059 (cos 0.998) | 0.049 (cos 0.999) |
 | `openpi_sdpa` | PI0 | PaliGemma (openpi) / eager | 1.1e-04 | 0.072 | 0.997 | 0.12 (cos 0.993) | 0.053 (cos 0.999) | 0.022 (cos 1.000) |
 | `openpi_sdpa` | PI05 | PaliGemma (openpi) / eager | 2.3e-04 | 0.059 | 0.998 | 0.14 (cos 0.990) | 0.041 (cos 0.999) | 0.034 (cos 1.000) |
 
@@ -294,7 +299,7 @@ the default code agree exactly (the noise floor is zero), so every number below 
 - **`sdpa` is in the same range**: language model 5.1% and 15%, vision tower cosine 0.29 and 0.24. The low cosine of all gradients together on QwenGR00T is the vision tower, whose gradient is the largest part of the total there. The judge is frozen on the headline recipe and cannot be run on the flash-attention recipes; the mean loss of their timed runs (steps 100 to 220) was QwenOFT, session 6: 0.2567 (baseline), 0.2569 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.2571 (`all`); QwenGR00T, session 6: 0.7987 (baseline), 0.7753 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.8057 (`all`); QwenGR00T, session 8: 0.8066 (baseline), 0.8082 (`exact`, bitwise identical to the baseline, so the difference is which batches a run draws), 0.8021 (`all`).
 - **`condition_once` does not change the loss at all** and moves gradients by 0.5% to 2.3%: only the order in which the copies' gradients are summed differs.
 - **`vision_attn_relaxed` is bitwise identical in this check**, because deterministic mode uses the unfused SDPA kernel, for which one batched call equals the per-image calls. The last-bit difference it is named for appears with the fused kernels that training uses (see the probe below).
-- **The PI0 / PI05 paths**: `openpi_sdpa` moves the gradients by 7.2% and 5.9%, `unused_views` by 3.0% and 2.5%; these checks load the converted base checkpoints, so every module has trained weights.
+- **The PI0 / PI05 paths**: `openpi_compile` moves the gradients by 8.0% and 6.8%, `openpi_sdpa` by 7.2% and 5.9%, `unused_views` by 3.0% and 2.5%; these checks load the converted base checkpoints, so every module has trained weights. With `openpi_compile`, five parameters get a gradient that they do not get in the default step, and it is exactly zero: the MLP, second norm and attention output projection of the last layer of the prefix stream, whose output the loss does not use. Compiled code returns zeros there and eager autograd returns nothing; DeepSpeed sets missing gradients to zero itself, so training is unchanged.
 - The action head is randomly initialised in every check (only the backbone has pretrained weights, except for PI0 / PI05), so absolute values differ between rows; each row compares two steps of the same process.
 
 ### Other frameworks and backbones: bitwise checks on real weights

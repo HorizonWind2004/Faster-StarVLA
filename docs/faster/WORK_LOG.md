@@ -253,3 +253,11 @@ jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measure
   script: compiled code returns zeros for parameters the loss does not use (the prefix stream's last MLP), eager
   autograd returns None, and the script compared concatenated vectors. DeepSpeed sets None gradients to zero
   itself, so training is the same; the script now compares by parameter name.
+- Session 9, PI0 and PI05 on the tree with `worker_examples` fixed and `openpi_compile`, `all` and `max` alternating
+  in one job: PI0 636.9 -> 591.8 (`exact`, 1.08x) -> 453.6 / 452.2 (`all`, 1.40x) -> 443.3 / 439.8 ms (`max`, 1.44x);
+  PI05 666.5 -> 626.9 (1.06x) -> 468.6 / 475.0 (1.40-1.42x) -> 465.1 / 463.8 ms (1.43-1.44x). Peak memory of PI0: 102.5
+  GiB upstream, 63.0 with `all`, 57.2 with `max`. `openpi_sdpa` is worth 1.5-2.5% and 9% of the memory; the "3.5%
+  slower on PI05" of session 8 was a comparison across jobs.
+- Session 10, distance of `openpi_compile` with the corrected script: gradients move by 8.0% (PI0) and 6.8% (PI05),
+  cosine 0.997 / 0.998. Five parameters have a gradient only in the compiled step, all exactly zero: the MLP, the
+  second norm and the attention output projection of the prefix stream's last layer, which the loss does not use.
