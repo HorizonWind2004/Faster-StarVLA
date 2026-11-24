@@ -24,6 +24,12 @@ ap.add_argument('--fast', default='')
 ap.add_argument('--model')
 ap.add_argument('--set', nargs='*', default=[])
 ap.add_argument('--cprofile', type=int, default=0, help='cProfile of rank 0 over this many steps, with CUDA_LAUNCH_BLOCKING=1')
+ap.add_argument('--host-profile', type=int, default=0,
+                help='cProfile of rank 0 over this many steps with kernels launched asynchronously, as in training: where '
+                     'the main thread spends its wall time, including the waits for the GPU')
+ap.add_argument('--stages', type=int, default=0,
+                help='time forward, backward and optimizer step separately over this many steps (synchronized at the edges)')
+ap.add_argument('--cache-dir', help='keep the compiler caches (Inductor, Triton) here across runs, to time a warm start')
 a = ap.parse_args()
 a.out = a.out if a.out.startswith('/') else str(WS / a.out)  # the training process runs in the tree
 
@@ -51,10 +57,15 @@ if a.model:
     bench.CFG['assets'] = dict(bench.CFG['assets'], model=a.model)
 switches = {'STARVLA_FAST': a.fast} if a.fast else {}
 with bench.GpuLock():
+    extra_env = {'CUDA_LAUNCH_BLOCKING': '1'} if a.cprofile else {}
+    if a.cache_dir:
+        cache = Path(a.cache_dir).resolve()
+        extra_env.update(TORCHINDUCTOR_CACHE_DIR=str(cache / 'inductor'), TRITON_CACHE_DIR=str(cache / 'triton'))
     res = bench.timing_run(a.tree if a.tree.startswith('/') else str(WS / a.tree), switches, a.out, a.tag,
-                           **({'cprofile': a.cprofile, 'extra_env': {'CUDA_LAUNCH_BLOCKING': '1'}} if a.cprofile else {}))
+                           cprofile=a.cprofile or a.host_profile, stages=a.stages, extra_env=extra_env)
 res['train_overrides'] = a.set
 res['fast'] = a.fast
 Path(a.out, f'{a.tag}_summary.json').write_text(json.dumps(res, indent=1) + '\n')
-print(json.dumps({k: res.get(k) for k in ('status', 'step_ms', 'window_step_ms', 'peak_mem_gib',
-                                          'gpu_util_mean_second_half', 'error')} | {'tag': a.tag, 'out': a.out}))
+print(json.dumps({k: res.get(k) for k in ('status', 'step_ms', 'window_step_ms', 'peak_mem_gib', 'gpu_util_mean_second_half',
+                                          'first_step_s', 'stage_ms_per_step', 'cprofile_s_per_step', 'error')
+                  if res.get(k) is not None or k in ('status', 'error')} | {'tag': a.tag, 'out': a.out}))

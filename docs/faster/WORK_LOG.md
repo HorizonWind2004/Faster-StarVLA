@@ -278,3 +278,47 @@ jobs on one node (2 GPUs, 32 cores); every speedup is against a baseline measure
   endpoints show nothing.
 - Found on the way: my first version of that script stopped at the first "different" verdict (the comparison tool
   exits non-zero), so `max` did not run in session 10.
+
+## Round 13: the table, cleared (24 Nov, evening)
+
+Code first, then one probe job (session 11, job 73035), then one verification job on the final tree (session 12).
+
+- Probes, `STARVLA_FAST=all`, stages synchronized at their edges (forward / backward / optimizer step, ms): QwenOFT
+  71 / 152 / 154; QwenGR00T 106 / 216 / 168; QwenAdapter 123 / 288 / 218; PI0 91 / 161 / 135. The optimizer step is
+  28-40% of a step in every framework.
+- Optimizer microbenchmark on one B300, a flat fp32 tensor of 2.25 billion elements (one rank's partition of the
+  headline recipe): torch's fused AdamW 104.9 ms, foreach 33.3 ms, the same update written out and compiled with
+  Inductor 9.4 ms (one pass over the four tensors: 3.9 ms per two-in-one-out pass). `adamw_compiled` (level `all`)
+  replaces the fused kernel for plain decoupled AdamW on fp32 CUDA tensors; torch's optimizer keeps its state. In
+  training, headline recipe, alternating in one job: `all` 422.6 / 410.8 ms, `all` + `adamw_compiled` 299.9 /
+  310.3 ms, baseline 786.3 ms.
+- `openpi_one_pass` (level `all`): PI0 / PI05 camera views through SigLIP in one call. PI0 378.8 / 378.6 ms against
+  448.7 / 447.1 without (baseline 649.7). One-step distance: gradients 0.15% (PI0) and 0.10% (PI05), loss unchanged.
+- `compile_head` (level `all`): the DiT head blocks and the adapter head's residual blocks compiled. QwenAdapter 623.0 /
+  626.6 ms against 688.1 / 681.6; QwenPI 963.7 against 977.9; QwenGR00T no difference. Two problems found by the
+  probes, both fixed before verification: (1) the GR00T DiT uses dropout 0.2, and compiled dropout drew its masks from
+  Inductor's own random stream (one-step gradients with cosine about 0 against the default step); the head is now
+  compiled with `fallback_random`, which keeps eager's kernels and generator (CPU test: masks, gradients and the
+  generator state identical over several shapes). (2) Three runs with the head compiled failed in the first step in
+  Inductor's memory-coalescing analysis (a sympy assertion; sympy decides is_constant at random sample points, so it
+  is intermittent); Inductor's config notes that the analysis does not support dynamic shapes. Both settings are
+  passed as torch.compile options of the head blocks only, so the backbone's compiled layers are unchanged.
+- `grad_cast` (cast while flattening the partition's gradients) and `unit_clip` (no multiply by a clipping factor of
+  exactly 1): bitwise identical, but `exact` with and without them 496.1 / 491.8 against 491.4 / 498.6 ms, and
+  `unit_clip` reads the factor on the host, a synchronization in every step. Both are selectable by name only.
+- Other backbones (not run): `attn_mask` checks its mask builder against the installed transformers before
+  registering it; `hidden_only` and every compiled layer fall back to the default forward when their first call
+  fails; `compile_lm` / `compile_vision` know the layer paths of other Hugging Face multimodal wrappers;
+  `worker_prep` retries without position ids; `get_world_model` calls the backbone hook and `compile_world_model`
+  compiles the blocks of the Wan and Cosmos-Predict2 backbones.
+- Compilation at start: PI0 with `all` reached its first step after 445 s with empty compiler caches, 165 s with the
+  caches of that run.
+
+### Session 12 (job 73045, tree d8544d8; released as 4e23836)
+
+- `compile_head` with eager's random draws: one step's gradients differ from eager by 1.8% (GR00T), 3.4% (PI),
+  6.6% (DiscreteDiffusion), 9.1% (Adapter), cosine ≥ 0.997 (before the fix: cosine ≈ 0); no compile fallback.
+- Judge on the final tree: `exact` PASS N0, 23,336/23,336 tensors bitwise, 500.3 ms (1.81× the frozen 906.9 ms);
+  `all` (now with `adamw_compiled` and `compile_head`) PASS N1, gate 3 equivalent, endpoints within 1.77σ,
+  340.3 ms (2.66×; 2.13× on 8427140 without the two paths).
+- Table (13 recipes × ref / exact / all / max) and the QwenPI statistical gate for the new `all` / `max`: running.

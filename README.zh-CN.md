@@ -71,18 +71,18 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 
 | 框架 | 底座 | 配方里的注意力实现 | 基线 (ms/步) | `exact` | `all` | `max` | `exact` 逐位核对 |
 |---|---|---|---:|---:|---:|---:|---|
-| QwenOFT | Qwen3-VL-4B | SDPA | 801.8 | 492.9 (1.63×) | 420.8 (1.91×) | 415.0 (1.93×) | 评判程序：23,336 个张量；728 个梯度 + 动作 ✓ |
-| QwenGR00T | Qwen3-VL-4B | SDPA | 905.0 | 603.5 (1.50×) | 498.2 (1.82×) | 500.4 (1.81×) | 960 个梯度 + 动作 ✓ |
-| QwenPI | Qwen3-VL-4B | SDPA | 1291.5 | 1110.2 (1.16×) | 976.2 (1.32×) | 664.3 (1.94×) | 1,225 个梯度 + 动作 ✓ |
+| QwenOFT | Qwen3-VL-4B | SDPA | 786.3 | 496.1 (1.58×) | 422.6 (1.86×) | — | 评判程序：23,336 个张量；728 个梯度 + 动作 ✓ |
+| QwenGR00T | Qwen3-VL-4B | SDPA | 902.9 | — | 495.0 (1.82×) | — | 960 个梯度 + 动作 ✓ |
+| QwenPI | Qwen3-VL-4B | SDPA | 1302.9 | — | 963.7 (1.35×) | — | 1,225 个梯度 + 动作 ✓ |
 | QwenPI_v3 | Qwen3-VL-4B | SDPA | 1679.6 | 1430.6 (1.17×) | 1012.3 (1.66×) | 702.3 (2.39×) | 1,376 个梯度 + 动作 ✓ |
 | QwenDiscreteDiffusion | Qwen3-VL-4B | SDPA | 2507.8 | 2295.9 (1.09×) | 2062.1 (1.22×) | 739.4 (3.39×) | 1,220 个梯度 + 动作 ✓ |
-| QwenAdapter | Qwen3-VL-4B | SDPA | 999.2 | 767.8 (1.30×) | 668.4 (1.49×) | — | 1,226 个梯度 + 动作 ✓ |
+| QwenAdapter | Qwen3-VL-4B | SDPA | 1040.0 | — | 623.0 (1.67×) | — | 1,226 个梯度 + 动作 ✓ |
 | LangForce | Qwen3-VL-4B | SDPA | 1577.5 | 955.9 (1.65×) | 780.8 (2.02×) | 774.9 (2.04×) | 961 个梯度 + 动作 ✓ |
 | QwenDual | Qwen3-VL-4B | SDPA | 1308.0 | 966.7 (1.35×) | 680.6 (1.92×) | 665.0 (1.97×) | 1,135 / 1,136 个梯度 + 动作（另 1 个上游自身两次运行也不同） ✓ |
 | QwenOFT | Qwen2.5-VL-3B | SDPA | 1176.3 | 573.5 (2.05×) | 466.1 (2.52×) | — | 840 个梯度 + 动作 ✓ |
 | QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 个梯度 + 动作 ✓ |
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 956.3 | 755.6 (1.27×) | 554.7 (1.72×) | 546.9 (1.75×) | 1,072 个梯度 + 动作 ✓ |
-| PI0 | PaliGemma (openpi) | eager | 636.9 | 591.8 (1.08×) | 453.6 (1.40×) | 443.3 (1.44×) | — |
+| PI0 | PaliGemma (openpi) | eager | 649.7 | — | 378.8 (1.72×) | — | — |
 | PI05 | PaliGemma (openpi) | eager | 666.5 | 626.9 (1.06×) | 468.6 (1.42×) | 465.1 (1.43×) | — |
 
 | 加速路径 | 档位 | 适用范围 |
@@ -98,16 +98,20 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | `vision_attn_relaxed` | all | 对所有尺寸一致的图像形状做批量视觉注意力（末位舍入可能不同） |
 | `compile_lm`、`compile_vision` | all | 有 `model.language_model.layers` / `model.visual.blocks` 的底座（Qwen-VL 系列），且注意力实现为 SDPA |
 | `condition_once` | all | 基于 starVLA 交叉注意力 DiT 的动作头（GR00T、逐层 flow matching、离散扩散）：框架为多个噪声水平复制的条件特征只投影一次 |
+| `compile_head` | all | 动作头的各层（GR00T、逐层 flow matching、离散扩散、LangForce、QwenDual 的 DiT 头，以及 Adapter 头的残差块）用 Inductor 编译；dropout 沿用 eager 的随机数 |
 | `unused_views` | all | PI0 / PI05：整个 batch 都没有的相机视角直接跳过，不再当作全黑图像编码 |
 | `openpi_compile` | all | PI0 / PI05：SigLIP 各层和 PaliGemma / 动作专家的联合层在训练调用时用 Inductor 编译 |
+| `openpi_one_pass` | all | PI0 / PI05：一个 batch 的多个相机视角合成一次 SigLIP 调用，不再每个视角调用一次 |
+| `adamw_compiled` | all | 所有用 DeepSpeed ZeRO-2 和 torch 融合 AdamW 训练的框架：每个 rank 的展平分区的更新编译成一个内核（B300 上 22.5 亿元素的分区，torch 融合内核 104.9 ms，编译版 9.4 ms） |
+| `compile_world_model` | all | 视频世界模型底座（Wan、Cosmos-Predict2）的 transformer 各层 |
 | `tf32` | max | fp32 矩阵乘使用 TF32，fp32 动作头的时间主要花在这上面。属于精度设置，所以不在 `all` 里 |
 | `openpi_sdpa` | max | PI0 / PI05：SigLIP 视觉塔和 PaliGemma / 动作专家的联合层改用融合的 scaled-dot-product attention，取代“矩阵乘、fp32 softmax、矩阵乘”；softmax 因此在 bf16 下计算 |
 
 每一行都与同一个批处理作业里测的基线比较。同一节点上，不同作业之间同一配方的基线会相差最多 10%，所以不同作业的毫秒数不能直接比，行内的倍数可以比（见[各次测量](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)）。
 
-`exact` 的收益来自 VLM 输入处理和底座本身：这部分占比大的配方收益大（LangForce 每步构建两套 prompt：1.65×），PI0 / PI05 很小（1.08×），因为它们的一步基本就是 PaliGemma 的前向和反向。
+`exact` 的收益来自 VLM 输入处理和底座本身：这部分占比大的配方收益大（LangForce 每步构建两套 prompt：1.65×），PI0 / PI05 很小（—），因为它们的一步基本就是 PaliGemma 的前向和反向。
 
-flow-matching 动作头跑在 fp32。`condition_once`（属于 `all`）把框架为多个噪声水平复制的条件特征改成每个样本只投影一次。`max` 再让动作头的 fp32 矩阵乘使用 TF32；动作头每一层都要投影 VLM 隐状态的框架，剩下的时间大部分就是这些矩阵乘（QwenPI 976 → 664 ms；QwenPI_v3 1012 → 702 ms；QwenDiscreteDiffusion 2062 → 739 ms）。TF32 是精度设置而不是运算顺序的变化，所以单列一档。评判程序在主配方上判定它统计等价；在 QwenPI 上按同样的方法检验（`all` 用 6 个种子、`max` 用 4 个种子），所有端点都在评判程序的 3σ 门限以内，最大的是 2.8σ（`max` 下的动作头更新量），见[详情](docs/faster/measurement.md#the-statistical-gate-on-qwenpi)；其他框架在计时的 220 步里 loss 曲线与基线没有可分辨的差别（[数据](docs/faster/measurement.md#tf32)）。
+flow-matching 动作头跑在 fp32。`condition_once`（属于 `all`）把框架为多个噪声水平复制的条件特征改成每个样本只投影一次。`max` 再让动作头的 fp32 矩阵乘使用 TF32；动作头每一层都要投影 VLM 隐状态的框架，剩下的时间大部分就是这些矩阵乘（QwenPI_v3 1012 → 702 ms；QwenDiscreteDiffusion 2062 → 739 ms）。TF32 是精度设置而不是运算顺序的变化，所以单列一档。评判程序在主配方上判定它统计等价；在 QwenPI 上按同样的方法检验（`all` 用 6 个种子、`max` 用 4 个种子），所有端点都在评判程序的 3σ 门限以内，最大的是 2.8σ（`max` 下的动作头更新量），见[详情](docs/faster/measurement.md#the-statistical-gate-on-qwenpi)；其他框架在计时的 220 步里 loss 曲线与基线没有可分辨的差别（[数据](docs/faster/measurement.md#tf32)）。
 
 Qwen2.5-VL 的配方默认用 flash-attention 加载底座。`exact` 保留 flash-attention，只启用与注意力实现无关的路径。`all` 先把底座切到 PyTorch 的 scaled-dot-product attention（`sdpa`），之后针对 SDPA 的路径和编译层才能生效：QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms。
 
@@ -144,7 +148,7 @@ Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑�
 把所有学习率乘以 1.02 的对照运行会被这项检查拒绝（更新量端点偏离 +16σ）；让 VLM 收不到梯度的版本、改了裁剪阈值的
 版本同样被拒绝。
 
-**在当前代码上。** 上面的检查是在首版上做的，当时加速路径还没有统一到 `STARVLA_FAST`，也没有扩展到其他框架。在当前代码上，评判程序再次确认 `STARVLA_FAST=exact` 逐位一致：23,336 个张量中 23,336 个相同；之后跑过这项检查的五次测量都是如此，最后一次用的就是发布的这个提交。`STARVLA_FAST=all` 的三进程检查在之后的测量里都没有给出结论：基线比冻结计时快，超出了允许的范围，评判程序按规则拒绝判定（INVALID）。它自己测到的加速比是 1.87×–1.96×。代理式检查（一次候选运行与冻结计时比较，再跑逐位门和统计门）在发布的提交上对 `all` 判定通过（等级 N1，各端点在 0.95σ 以内）；在较早的一个提交上，对 `all,tf32`（即 `max` 在这个配方上启用的全部路径）也通过（等级 N2，1.41σ 以内）。[详情](docs/faster/measurement.md#the-judge-on-the-unified-code)。
+**在当前代码上。** 上面的检查是在首版上做的，当时加速路径还没有统一到 `STARVLA_FAST`，也没有扩展到其他框架。在当前代码上，评判程序再次确认 `STARVLA_FAST=exact` 逐位一致：23,336 个张量中 23,336 个相同；之后跑过这项检查的6次测量都是如此，最后一次用的就是发布的这个提交。`STARVLA_FAST=all` 的三进程检查在之后的测量里都没有给出结论：基线比冻结计时快，超出了允许的范围，评判程序按规则拒绝判定（INVALID）。它自己测到的加速比是 1.87×–1.96×。代理式检查（一次候选运行与冻结计时比较，再跑逐位门和统计门）在发布的提交上对 `all` 判定通过（等级 N1，各端点在 1.77σ 以内；每步 340 ms，是冻结计时 906.9 ms 的 2.66×）；在较早的一个提交上，对 `all,tf32`（即 `max` 在这个配方上启用的全部路径）也通过（等级 N2，1.41σ 以内）。[详情](docs/faster/measurement.md#the-judge-on-the-unified-code)。
 
 **LIBERO 评测。** 用全部加速路径完整训练一次（30,000 步，种子 42，2 × B300，全局 batch 32），按 starVLA 的 LIBERO 协议
 评测（每个套件 500 个 episode），并在同一条评测管线里评测官方发布的 checkpoint。官方 checkpoint 由 starVLA 作者在

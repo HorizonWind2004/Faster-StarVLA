@@ -25,12 +25,15 @@ SESSIONS = {
     "72750": {"session": 6, "node": "C", "when": "24 Nov", "note": "the other Qwen frameworks, sdpa path, judge with TF32"},
     "72753": {"session": 7, "node": "C", "when": "24 Nov", "note": "condition_once, unused_views, PI0 / PI05"},
     "72867": {"session": 9, "node": None, "when": "24 Nov", "note": "PI0 / PI05 with worker_examples and openpi_compile; all and max alternating"},
+    "73035": {"session": 11, "node": None, "when": "24 Nov, evening", "note": "probes: optimizer, stages, new paths on and off"},
+    "73045": {"session": 12, "node": None, "when": "24-25 Nov", "note": "final tree: judge, the whole table, statistical gate"},
     "72879": {"session": 10, "node": None, "when": "24 Nov", "note": "statistical gate on QwenPI; judge on the released commit"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
 }
 OTHERS = WS / "runs/others"  # session 4
 TF32 = WS / "runs/others_tf32"  # session 5
-ROOTS = {4: OTHERS, 5: TF32, 6: WS / "runs/r13", 7: WS / "runs/r14", 8: WS / "runs/r15", 9: WS / "runs/r16", 10: WS / "runs/r17"}
+ROOTS = {4: OTHERS, 5: TF32, 6: WS / "runs/r13", 7: WS / "runs/r14", 8: WS / "runs/r15", 9: WS / "runs/r16", 10: WS / "runs/r17",
+         11: WS / "runs/r20", 12: WS / "runs/r21"}
 TAGS = ("ref", "exact", "all", "all_tf32")
 Q3, Q25, SDPA, FA2 = "Qwen3-VL-4B", "Qwen2.5-VL-3B", "sdpa", "flash_attention_2"
 COMBO_INFO = {  # run directory -> framework, backbone, attention the config asks for
@@ -94,8 +97,10 @@ judges = [j for j in (
     judge("all + tf32", ROOTS[6] / "judge_all_tf32/check.json", "72750", "STARVLA_FAST=all,tf32, commit 8332201"),
     judge("final tree, exact", ROOTS[8] / "judge_exact/check.json", "72818", "STARVLA_FAST=exact, commit e5f7e15"),
     judge("final tree, all", ROOTS[8] / "final_all/check.json", "72818", "STARVLA_FAST=all, commit e5f7e15, three-process check"),
-    judge("released commit, all", WS / "runs/r17/judge_all/check.json", "72879", "STARVLA_FAST=all, against the frozen timing"),
-    judge("released commit, exact", WS / "runs/r17/judge_exact/check.json", "72879", "STARVLA_FAST=exact"),
+    judge("commit 8427140, all", WS / "runs/r17/judge_all/check.json", "72879", "STARVLA_FAST=all, against the frozen timing"),
+    judge("commit 8427140, exact", WS / "runs/r17/judge_exact/check.json", "72879", "STARVLA_FAST=exact"),
+    judge("released commit, all", ROOTS[12] / "judge_all/check.json", "73045", "STARVLA_FAST=all (adamw_compiled, compile_head), against the frozen timing"),
+    judge("released commit, exact", ROOTS[12] / "judge_exact/check.json", "73045", "STARVLA_FAST=exact"),
 ) if j]
 by_name = {j["name"]: j for j in judges}
 
@@ -219,7 +224,7 @@ alternating = {tag: cell for tag, cell in alternating.items() if cell}
 
 # ---- rounding-level paths: distance of one training step from the default step
 distances = []
-for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "distance")):
+for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "distance"), (11, "distance"), (12, "distance")):
     for p in sorted((ROOTS[session] / folder).glob("*.json")):
         d = load(p)
         if d and ("default_vs_fast" in d or "flash_vs_sdpa" in d):
