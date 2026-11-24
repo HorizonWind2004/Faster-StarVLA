@@ -16,10 +16,23 @@ def use_sdpa(vlm):
     switch = getattr(model, "set_attn_implementation", None)
     if not callable(switch) or "flash_attention_2" not in _implementations(model):
         return False
-    switch("sdpa")
+    try:
+        switch("sdpa")
+    except (ValueError, ImportError):  # a sub-model without SDPA (Gemma 4's audio tower): switch the others one by one
+        for module in model.modules():
+            sub_switch = getattr(module, "set_attn_implementation", None)
+            if module is not model and callable(sub_switch) and attention_implementation(module) == "flash_attention_2":
+                try:
+                    sub_switch("sdpa")
+                except (ValueError, ImportError):
+                    pass  # keeps flash-attention
     for module in model.modules():  # Qwen2.5-VL's text model keeps a copy
-        if getattr(module, "_attn_implementation", None) == "flash_attention_2":
+        if getattr(module, "_attn_implementation", None) == "flash_attention_2" and \
+                attention_implementation(module) != "flash_attention_2":
             module._attn_implementation = "sdpa"
+    language_model = getattr(getattr(model, "model", None), "language_model", None)
+    if language_model is not None:  # the paths written for SDPA look at the language model and the vision tower
+        return attention_implementation(language_model) != "flash_attention_2"
     return "flash_attention_2" not in _implementations(model)
 
 
