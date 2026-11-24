@@ -283,6 +283,35 @@ def _check_condition_once():
     print("ok condition_once: key / value projections on 3 rows instead of 12, loss and gradients equal to rounding")
 
 
+def test_cast_while_flattening():
+    """The fp32 gradient that DeepSpeed's step builds is bit for bit the same when it is cast while it is flattened."""
+    import torch
+
+    from starVLA.fast import deepspeed
+
+    class DeepSpeedZeroOptimizer:  # the two lines of DeepSpeedZeroOptimizer.step that the path touches
+        cpu_offload = False
+        flatten = staticmethod(torch._C._nn.flatten_dense_tensors)
+
+        def step(self, closure=None):
+            self.result = self.flatten(self.gradients).to(torch.float32)
+
+    class Engine:
+        optimizer = DeepSpeedZeroOptimizer()
+
+    torch.manual_seed(0)
+    base = torch.randn(4, 5, 6).to(torch.bfloat16)
+    Engine.optimizer.gradients = [base, base.transpose(0, 2), torch.randn(7).to(torch.bfloat16), torch.zeros(3, dtype=torch.bfloat16)]
+    Engine.optimizer.step()
+    expected = Engine.optimizer.result
+    assert deepspeed.cast_while_flattening(Engine) and deepspeed.cast_while_flattening(Engine)
+    Engine.optimizer.step()
+    assert Engine.optimizer.result.dtype == torch.float32 and torch.equal(Engine.optimizer.result, expected)
+    assert Engine.optimizer.flatten is DeepSpeedZeroOptimizer.flatten  # restored after the step
+    assert not deepspeed.cast_while_flattening(object())
+    print("ok cast_while_flattening: the fp32 gradient is identical")
+
+
 def test_condition_once():
     _in_subprocess("condition_once")
 
@@ -320,7 +349,7 @@ def test_selection():
         assert fast.selection() == frozenset(n for n, p in fast.FAST_PATHS.items() if p.legacy) - {"reduce_to_owner"}
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
-        assert fast.selection() == fast.LEVELS["exact"] - {"worker_examples"}
+        assert fast.selection() == frozenset(n for n in fast.LEVELS["exact"] if fast.FAST_PATHS[n].legacy)
         os.environ["STARVLA_FAST"] = "nonsense"
         try:
             fast.selection()
@@ -376,4 +405,5 @@ if __name__ == "__main__":
         test_qwen2_5_vl_bitwise()
         test_flash_attention_backbone()
         test_condition_once()
+        test_cast_while_flattening()
         test_worker_prep()

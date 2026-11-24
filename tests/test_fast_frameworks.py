@@ -6,7 +6,7 @@ tokenizer and config of a model directory, so the prompts and the image pipeline
     STARVLA_TEST_VLMS=<dir of Qwen3-VL-4B-Instruct>[,<dir of Qwen2.5-VL-3B-Instruct>] python tests/test_fast_frameworks.py
 
 With STARVLA_TEST_PALIGEMMA_TOKENIZER=<paligemma_tokenizer.model>, also the PI0 / PI05 paths (worker_examples,
-unused_views, openpi_sdpa).
+unused_views, openpi_one_pass, openpi_sdpa).
 """
 import dataclasses
 import hashlib
@@ -151,8 +151,8 @@ def _check(model_dir):
 def _check_openpi(tokenizer_model):
     """PI0 and PI05 (small Gemma towers, fp64) on samples with two of the three camera views. worker_examples: a batch
     from a DataLoader with workers gives the same loss and gradients bit for bit. unused_views: the prefix is 256
-    tokens shorter; openpi_sdpa: fused attention; with either, the loss, the gradients and the predicted actions
-    are the same to rounding."""
+    tokens shorter; openpi_one_pass: one SigLIP call per step; openpi_sdpa: fused attention; with each, the loss,
+    the gradients and the predicted actions are the same to rounding."""
     import numpy as np
     import torch
     from omegaconf import OmegaConf
@@ -177,12 +177,16 @@ def _check_openpi(tokenizer_model):
                              action_expert_config=dict(small, width=64, mlp_dim=128))
         cfg.framework.tokenizer.model_path = tokenizer_model
 
+        calls = []
+
         def run(setting):
             os.environ["STARVLA_FAST"] = setting
             torch.manual_seed(0)
             model = build_framework(wrap_config(cfg)).double().train()  # wrapped as the trainer wraps it
             prefix_tokens, joint_layers = [], model.forward_with_action_expert
             model.forward_with_action_expert = lambda **kw: (prefix_tokens.append(kw["prefix_embs"].shape[1]), joint_layers(**kw))[1]
+            tower_calls, image_features = [], model.vlm.model.get_image_features
+            model.vlm.model.get_image_features = lambda image: (tower_calls.append(image.shape[0]), image_features(image))[1]
             batch = samples
             if setting == "worker_examples":
                 batch = next(iter(DataLoader(samples, batch_size=len(samples), num_workers=1,
@@ -190,6 +194,7 @@ def _check_openpi(tokenizer_model):
             torch.manual_seed(1)
             loss = model(batch)["action_loss"]
             loss.backward()
+            calls.append(list(tower_calls))  # SigLIP calls of the training step: images per call
             grads = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
             torch.manual_seed(2)
             actions = model.eval().predict_action([{k: v for k, v in s.items() if k != "action"} for s in samples])
@@ -202,14 +207,17 @@ def _check_openpi(tokenizer_model):
         assert worker_loss == loss and torch.equal(worker_grads, grads) and torch.equal(worker_actions, actions)
         print(f"ok {framework} worker_examples: samples prepared in a worker, loss and {grads.numel():,} gradient "
               f"values identical", flush=True)
-        for setting in ("unused_views", "openpi_sdpa"):
+        assert calls[-1] == [2, 2, 2], calls  # three views, one of them the black stand-in
+        for setting, tower in (("unused_views", [2, 2]), ("openpi_one_pass", [6]), ("openpi_one_pass,unused_views", [4]),
+                               ("openpi_sdpa", [2, 2, 2])):
             fast_loss, fast_grads, fast_tokens, fast_actions = run(setting)
-            assert fast_tokens == tokens - (256 if setting == "unused_views" else 0), (tokens, fast_tokens)
+            assert calls[-1] == tower, (setting, calls[-1])
+            assert fast_tokens == tokens - (256 if "unused_views" in setting else 0), (tokens, fast_tokens)
             assert abs(fast_loss - loss) <= 1e-6 * abs(loss) and (fast_grads - grads).norm() <= 1e-6 * grads.norm()
             assert (fast_actions - actions).abs().max() <= 1e-5
-            assert not torch.equal(fast_grads, grads)  # the path took effect
-            print(f"ok {framework} {setting}: prefix {tokens} -> {fast_tokens} tokens, loss, gradients and actions "
-                  f"equal to rounding", flush=True)
+            assert "one_pass" in setting or not torch.equal(fast_grads, grads)  # the path took effect
+            print(f"ok {framework} {setting}: prefix {tokens} -> {fast_tokens} tokens, SigLIP calls {tower}, loss, gradients "
+                  f"and actions equal to rounding", flush=True)
 
 
 def test_openpi():

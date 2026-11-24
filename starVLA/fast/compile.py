@@ -1,4 +1,4 @@
-"""Regional torch.compile of the backbone's decoder layers and vision blocks for training.
+"""Regional torch.compile of the backbone's decoder layers and vision blocks, and of the action head's blocks, for training.
 
 Measured on Qwen3-VL-4B: at the training shape (16 x 205 tokens) one forward + backward of the 36 decoder layers runs about 10,000 small GPU
 ops: per layer and direction a handful of matrix products and dozens of elementwise ops (RMSNorm in fp32, rotary
@@ -101,3 +101,22 @@ def apply_vision(vlm):
     """Compile the blocks of the backbone's vision tower (`model.model.visual.blocks`). Meant to be used with
     vision_attn, whose per-layer code has no host reads."""
     return _apply(vlm, "model.model.visual.blocks")
+
+
+def apply_head(framework):
+    """Compile the transformer blocks of the action head (starVLA's cross-attention DiT, and the self-attention
+    transformer some heads put in front of it). The head runs in fp32 with a few dozen action tokens per sample, so
+    apart from the projections of the conditioning its time is the latency of many small operations."""
+    try:
+        from starVLA.model.modules.action_model.flow_matching_head.cross_attention_dit import DiT, SelfAttentionTransformer
+    except ImportError:
+        return False
+    found = False
+    for module in framework.modules():
+        if isinstance(module, (DiT, SelfAttentionTransformer)) and len(module.transformer_blocks):
+            if not getattr(module.transformer_blocks, "_starvla_compiled", False):
+                _compile_forwards(module.transformer_blocks, dynamic=True)
+                module.transformer_blocks._starvla_compiled = True
+            found = True
+    return found
+

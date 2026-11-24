@@ -2,6 +2,10 @@
 
 fused_grad_norm    clipping norm: vector_norm(g, dtype=float64) instead of vector_norm(g.double()), per parameter as
                    before. Same value bit for bit, without materializing every gradient in fp64.
+cast_while_flattening
+                   step() builds the fp32 gradient of this rank's partition as flatten(gradients).to(float32): one
+                   pass over the partition to concatenate the bf16 gradients, a second to cast the copy. Each
+                   gradient is copied to its place in an fp32 buffer instead; the copy casts. Same values, one pass.
 plain_allreduce    all-reduce each gradient bucket in place (zero_optimization.reduce_scatter = false) instead of
                    slicing it per parameter and owner, concatenating the slices, all-reducing the copy and copying
                    the owned part back. On two ranks (a + b) * 0.5 and a * 0.5 + b * 0.5 are the same bf16 value.
@@ -72,6 +76,50 @@ def fused_grad_norm(engine):
     if optimizer is None:
         return False
     _fused_grad_norm(optimizer)
+    return True
+
+
+def _cast_while_flattening(zero_optimizer):
+    """DeepSpeedZeroOptimizer.step (0.16.9) calls self.flatten in two places, both followed by .to(dtype of the fp32
+    partition). During step(), self.flatten returns an object whose .to() fills the fp32 buffer directly."""
+    import types
+
+    import torch
+
+    flatten, original = zero_optimizer.flatten, type(zero_optimizer).step
+
+    class Flattened:
+        def __init__(self, tensors):
+            self.tensors = list(tensors)
+
+        def to(self, dtype, *args, **kwargs):
+            tensors = self.tensors
+            if args or kwargs or not tensors or not isinstance(dtype, torch.dtype) or dtype == tensors[0].dtype:
+                return flatten(tensors).to(dtype, *args, **kwargs)
+            flat = torch.empty(sum(t.numel() for t in tensors), dtype=dtype, device=tensors[0].device)
+            offset = 0
+            for tensor in tensors:
+                flat.narrow(0, offset, tensor.numel()).copy_(tensor.reshape(-1))
+                offset += tensor.numel()
+            return flat
+
+    def step(self, closure=None):
+        self.flatten = Flattened
+        try:
+            return original(self, closure)
+        finally:
+            self.flatten = flatten
+
+    zero_optimizer.step = types.MethodType(step, zero_optimizer)
+
+
+def cast_while_flattening(engine):
+    optimizer = _zero_optimizer(engine)
+    if optimizer is None or not callable(getattr(optimizer, "flatten", None)) or getattr(optimizer, "cpu_offload", False):
+        return False
+    if not getattr(optimizer.step, "_starvla_cast_while_flattening", False):
+        _cast_while_flattening(optimizer)
+        optimizer.step.__func__._starvla_cast_while_flattening = True
     return True
 
 

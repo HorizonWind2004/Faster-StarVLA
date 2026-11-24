@@ -16,6 +16,9 @@ masked token, and position ids count active tokens only (cumsum of the padding m
 remaining positions are the same function of the same operands. The sequence is shorter, so sums run in a different
 order: results differ in rounding.
 
+openpi_one_pass: the camera views of a batch go through the SigLIP tower in one call instead of one call per view.
+The same images through the same layers; a larger batch per kernel, so results can differ in rounding.
+
 openpi_sdpa: the SigLIP tower and the joint PaliGemma / action-expert layers compute attention as matmul, softmax
 in fp32, matmul, which materialises a [batch, heads, tokens, tokens] weight tensor twice per layer.
 `scaled_dot_product_attention` computes the same attention (same mask, same scale) in one fused kernel. The softmax
@@ -180,6 +183,34 @@ def worker_examples(framework):
 def collate(cfg, collate_fn):
     """Data hook: the collate function for the workers; `collate_fn` itself when no framework was set up."""
     return collate_fn if _stand_in is None else ExamplesCollate(collate_fn, _stand_in)
+
+
+# ---------------------------------------------------------------------------------------------- openpi_one_pass
+
+
+def one_pass(framework):
+    embed_prefix = getattr(framework, "embed_prefix", None)
+    vlm = getattr(framework, "vlm", None)
+    if not callable(embed_prefix) or not callable(getattr(vlm, "embed_image", None)):
+        return False
+    if getattr(embed_prefix, "_starvla_one_pass", False):
+        return True
+
+    def embed_views_together(self, images, img_masks, lang_tokens, lang_masks):
+        images = list(images)
+        if len(images) < 2 or any(image.shape != images[0].shape for image in images):
+            return embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        together = vlm.embed_image(torch.cat(images)).split(images[0].shape[0])
+        embedded = {id(image): part for image, part in zip(images, together)}
+        vlm.embed_image = lambda image: embedded[id(image)]  # what embed_prefix asks for, view by view
+        try:
+            return embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        finally:
+            del vlm.embed_image
+
+    embed_views_together._starvla_one_pass = True
+    framework.embed_prefix = types.MethodType(embed_views_together, framework)
+    return True
 
 
 # ---------------------------------------------------------------------------------------------- unused_views

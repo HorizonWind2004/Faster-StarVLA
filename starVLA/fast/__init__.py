@@ -60,6 +60,9 @@ FAST_PATHS = {  # applied in this order
     "allreduce": FastPath(True, "engine", "deepspeed:plain_allreduce",
                           "DeepSpeed ZeRO-2 gradient buckets all-reduced in place",
                           ("STARVLA_DS_PLAIN_ALLREDUCE",)),
+    "grad_cast": FastPath(True, "engine", "deepspeed:cast_while_flattening",
+                          "DeepSpeed ZeRO-2 step: the partition's gradients are cast to fp32 while they are "
+                          "flattened, in one pass instead of two"),
     "vision_attn_relaxed": FastPath(False, "backbone", "vision_attn:apply_relaxed",
                                     "the batched vision attention for every uniform shape (last-bit differences)"),
     "compile_lm": FastPath(False, "backbone", "compile:apply_lm",
@@ -71,6 +74,11 @@ FAST_PATHS = {  # applied in this order
     "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),
+    "compile_head": FastPath(False, "framework", "compile:apply_head",
+                             "the transformer blocks of the DiT action heads compiled with Inductor for training calls"),
+    # before unused_views, which wraps it: the views that remain are the ones embedded together
+    "openpi_one_pass": FastPath(False, "framework", "openpi:one_pass",
+                                "PI0 / PI05: the camera views of a batch go through SigLIP in one call"),
     "unused_views": FastPath(False, "framework", "openpi:unused_views",
                              "PI0 / PI05: a camera view that no sample of the batch has is left out instead of "
                              "being encoded as a black image and masked"),
