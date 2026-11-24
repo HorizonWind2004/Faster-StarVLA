@@ -60,6 +60,9 @@ FAST_PATHS = {  # applied in this order
     "allreduce": FastPath(True, "engine", "deepspeed:plain_allreduce",
                           "DeepSpeed ZeRO-2 gradient buckets all-reduced in place",
                           ("STARVLA_DS_PLAIN_ALLREDUCE",)),
+    "unit_clip": FastPath(True, "engine", "deepspeed:skip_unit_clip",
+                          "DeepSpeed ZeRO-2 step: no pass over the gradient to multiply it by a clipping factor of "
+                          "exactly 1"),
     "grad_cast": FastPath(True, "engine", "deepspeed:cast_while_flattening",
                           "DeepSpeed ZeRO-2 step: the partition's gradients are cast to fp32 while they are "
                           "flattened, in one pass instead of two"),
@@ -75,7 +78,7 @@ FAST_PATHS = {  # applied in this order
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),
     "compile_head": FastPath(False, "framework", "compile:apply_head",
-                             "the transformer blocks of the DiT action heads compiled with Inductor for training calls"),
+                             "the blocks of the action head (DiT heads, the adapter head) compiled with Inductor for training calls"),
     # before unused_views, which wraps it: the views that remain are the ones embedded together
     "openpi_one_pass": FastPath(False, "framework", "openpi:one_pass",
                                 "PI0 / PI05: the camera views of a batch go through SigLIP in one call"),
@@ -85,6 +88,9 @@ FAST_PATHS = {  # applied in this order
     "openpi_compile": FastPath(False, "framework", "openpi:compile_layers",
                                "PI0 / PI05: SigLIP layers and the joint PaliGemma / action-expert layers compiled "
                                "with Inductor for training calls"),
+    # not measured against torch's fused kernel in training yet; selectable by name only
+    "adamw_compiled": FastPath(False, "engine", "optimizer:apply",
+                               "the AdamW update of the flat ZeRO-2 partitions as one Inductor-compiled pass"),
     # measured slower than the default on two ranks; selectable by name only
     "reduce_to_owner": FastPath(True, "engine", "deepspeed:reduce_to_owner",
                                 "DeepSpeed ZeRO-2 gradient buckets reduced to the owning rank only",
@@ -98,7 +104,7 @@ FAST_PATHS = {  # applied in this order
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
 PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
-BY_NAME_ONLY = frozenset({"reduce_to_owner"})
+BY_NAME_ONLY = frozenset({"reduce_to_owner", "adamw_compiled"})
 LEVELS = {
     "exact": frozenset(n for n, p in FAST_PATHS.items() if p.exact and n not in BY_NAME_ONLY),
     "all": frozenset(n for n in FAST_PATHS if n not in BY_NAME_ONLY | PRECISION),

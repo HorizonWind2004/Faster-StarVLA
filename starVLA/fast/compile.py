@@ -104,19 +104,30 @@ def apply_vision(vlm):
 
 
 def apply_head(framework):
-    """Compile the transformer blocks of the action head (starVLA's cross-attention DiT, and the self-attention
-    transformer some heads put in front of it). The head runs in fp32 with a few dozen action tokens per sample, so
-    apart from the projections of the conditioning its time is the latency of many small operations."""
+    """Compile the transformer blocks of the action head: starVLA's cross-attention DiT (and the self-attention
+    transformer some heads put in front of it), and the residual blocks of the adapter head. A head works on a few
+    dozen action tokens per sample, so apart from the projections of the conditioning its time is the latency of
+    many small operations."""
+    kinds = []
     try:
         from starVLA.model.modules.action_model.flow_matching_head.cross_attention_dit import DiT, SelfAttentionTransformer
+
+        kinds += [(DiT, "transformer_blocks"), (SelfAttentionTransformer, "transformer_blocks")]
     except ImportError:
-        return False
+        pass
+    try:
+        from starVLA.model.modules.action_model.VLA_AdapterHeader import MLPResNet
+
+        kinds.append((MLPResNet, "mlp_resnet_blocks"))
+    except ImportError:
+        pass
     found = False
     for module in framework.modules():
-        if isinstance(module, (DiT, SelfAttentionTransformer)) and len(module.transformer_blocks):
-            if not getattr(module.transformer_blocks, "_starvla_compiled", False):
-                _compile_forwards(module.transformer_blocks, dynamic=True)
-                module.transformer_blocks._starvla_compiled = True
-            found = True
+        for kind, name in kinds:
+            blocks = getattr(module, name, None) if isinstance(module, kind) else None
+            if blocks is not None and len(blocks):
+                if not getattr(blocks, "_starvla_compiled", False):
+                    _compile_forwards(blocks, dynamic=True)
+                    blocks._starvla_compiled = True
+                found = True
     return found
-

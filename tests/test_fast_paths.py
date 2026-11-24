@@ -311,6 +311,32 @@ def test_cast_while_flattening():
     assert not deepspeed.cast_while_flattening(object())
     print("ok cast_while_flattening: the fp32 gradient is identical")
 
+    class DeepSpeedZeroOptimizer:  # noqa: F811  DeepSpeed's clipping, verbatim
+        loss_scale, clip_grad = 1.0, 1.0
+
+        def unscale_and_clip_grads(self, grad_groups_flat, total_norm):
+            combined_scale = self.loss_scale
+            if self.clip_grad > 0.:
+                clip = ((total_norm / self.loss_scale) + 1e-6) / self.clip_grad
+                clip = torch.clamp(clip, min=1.0)
+                combined_scale = clip * self.loss_scale
+            for grad in grad_groups_flat:
+                grad.data.mul_(1. / combined_scale)
+
+    class Engine:  # noqa: F811
+        optimizer = DeepSpeedZeroOptimizer()
+
+    gradient = torch.randn(1000)
+    gradient[:4] = torch.tensor([0.0, -0.0, float("inf"), 1e-42])
+    for norm in (0.25, 0.999998, 1.0, 3.0):
+        expected, actual = gradient.clone(), gradient.clone()
+        DeepSpeedZeroOptimizer.unscale_and_clip_grads(Engine.optimizer, [expected], torch.tensor(norm))
+        assert deepspeed.skip_unit_clip(Engine)
+        Engine.optimizer.unscale_and_clip_grads([actual], torch.tensor(norm))
+        assert torch.equal(actual, expected) and torch.equal(torch.signbit(actual), torch.signbit(expected)), norm
+        assert torch.equal(actual, gradient) == (norm < 0.9999985), norm  # untouched exactly when nothing is clipped
+    print("ok skip_unit_clip: the gradient is identical with and without clipping")
+
 
 def test_condition_once():
     _in_subprocess("condition_once")

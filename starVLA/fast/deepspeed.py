@@ -6,6 +6,9 @@ cast_while_flattening
                    step() builds the fp32 gradient of this rank's partition as flatten(gradients).to(float32): one
                    pass over the partition to concatenate the bf16 gradients, a second to cast the copy. Each
                    gradient is copied to its place in an fp32 buffer instead; the copy casts. Same values, one pass.
+skip_unit_clip     step() multiplies the fp32 gradient by 1 / clip in every step, also when the norm is below the
+                   clipping threshold and the factor is exactly 1: a pass over the whole partition that changes
+                   nothing (x * 1.0 is x for every finite x and for infinities). That pass is skipped.
 plain_allreduce    all-reduce each gradient bucket in place (zero_optimization.reduce_scatter = false) instead of
                    slicing it per parameter and owner, concatenating the slices, all-reducing the copy and copying
                    the owned part back. On two ranks (a + b) * 0.5 and a * 0.5 + b * 0.5 are the same bf16 value.
@@ -120,6 +123,38 @@ def cast_while_flattening(engine):
     if not getattr(optimizer.step, "_starvla_cast_while_flattening", False):
         _cast_while_flattening(optimizer)
         optimizer.step.__func__._starvla_cast_while_flattening = True
+    return True
+
+
+def _skip_unit_clip(zero_optimizer):
+    """DeepSpeedZeroOptimizer.unscale_and_clip_grads (0.16.9): the factor is computed as there; the multiplication
+    is DeepSpeed's own whenever the factor is not exactly 1."""
+    import types
+
+    import torch
+
+    original = type(zero_optimizer).unscale_and_clip_grads
+
+    def unscale_and_clip_grads(self, grad_groups_flat, total_norm):
+        combined_scale = self.loss_scale
+        if self.clip_grad > 0.:
+            clip = ((total_norm / self.loss_scale) + 1e-6) / self.clip_grad
+            clip = torch.clamp(clip, min=1.0)
+            combined_scale = clip * self.loss_scale
+        if float(1. / combined_scale) == 1.0:
+            return
+        original(self, grad_groups_flat, total_norm)
+
+    unscale_and_clip_grads._starvla_skip_unit_clip = True
+    zero_optimizer.unscale_and_clip_grads = types.MethodType(unscale_and_clip_grads, zero_optimizer)
+
+
+def skip_unit_clip(engine):
+    optimizer = _zero_optimizer(engine)
+    if optimizer is None or not all(hasattr(optimizer, name) for name in ("unscale_and_clip_grads", "loss_scale", "clip_grad")):
+        return False
+    if not getattr(optimizer.unscale_and_clip_grads, "_starvla_skip_unit_clip", False):
+        _skip_unit_clip(optimizer)
     return True
 
 
