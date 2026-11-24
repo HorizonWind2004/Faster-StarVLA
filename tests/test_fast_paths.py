@@ -572,7 +572,7 @@ def test_text_longest():
     tokenizer.padding_side = "right"
     torch.manual_seed(0)
     encoder = UMT5EncoderModel(UMT5Config(vocab_size=len(tokenizer), d_model=32, d_kv=8, d_ff=64,
-                                          num_layers=2, num_heads=4)).eval()
+                                          num_layers=2, num_heads=4, dropout_rate=0.1)).eval()
     stand_in = types.SimpleNamespace(tokenizer=tokenizer, text_encoder=encoder)
     instructions = ["pick up the black bowl", "open the top drawer of the cabinet and put the bowl inside it"]
     upstream = _Wan2_Interface._encode_text(stand_in, instructions, max_length=64)
@@ -590,6 +590,12 @@ def test_text_longest():
     for row, mask in enumerate(lengths):
         assert not fast[row, len(mask):].any()
     assert torch.allclose(fast.float(), upstream.float(), atol=1e-2, rtol=0), (fast.float() - upstream.float()).abs().max()
+    encoder.train()  # active dropout: upstream's encoding, with upstream's random draws
+    torch.manual_seed(3)
+    upstream_train = _Wan2_Interface._encode_text(stand_in, instructions, max_length=64)
+    torch.manual_seed(3)
+    assert torch.equal(wan._encode_text(instructions, max_length=64), upstream_train)
+    encoder.eval()
 
     class Other(torch.nn.Module):
         tokenizer = text_encoder = None
@@ -598,7 +604,7 @@ def test_text_longest():
             return None
 
     assert not world_model.text_longest(Other())
-    print(f"ok text_longest: same shape and zeros, largest difference {(fast.float() - upstream.float()).abs().max():.1e}")
+    print(f"ok text_longest: upstream with active dropout; in eval mode same shape and zeros, largest difference {(fast.float() - upstream.float()).abs().max():.1e}")
 
 
 def test_adamw_compiled():

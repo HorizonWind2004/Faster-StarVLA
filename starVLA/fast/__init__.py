@@ -85,7 +85,8 @@ FAST_PATHS = {  # applied in this order
                                     "compiled with Inductor for training calls"),
     "text_longest": FastPath(False, "backbone", "world_model:text_longest",
                              "Wan: the UMT5 text encoder on the batch's longest instruction instead of 512 padded "
-                             "tokens (upstream zeroes every position past the instruction afterwards)"),
+                             "tokens (upstream zeroes every position past the instruction afterwards); only while "
+                             "the encoder has no active dropout (evaluation, inference)"),
     "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),

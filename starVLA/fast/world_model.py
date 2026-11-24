@@ -13,6 +13,11 @@ change, not an exact one.
 
 Applies only where the interface's encoder is the code described above (checked on its source); Cosmos-Predict2
 keeps its padded T5 outputs, which depend on the padding length, and is left alone.
+
+Upstream leaves UMT5 in training mode during training, with its dropout (rate 0.1) active. Dropout on fewer positions
+draws other masks and moves the random stream for everything after it, so while the encoder has an active dropout
+the upstream encoding runs unchanged: in training as upstream configures it this path does nothing; it applies to
+evaluation and inference (and to a recipe that puts the text encoder in eval mode).
 """
 import inspect
 
@@ -32,14 +37,21 @@ def _zero_padded_upstream(backbone):
     return all(marker in source for marker in _UPSTREAM_MARKERS)
 
 
+def _active_dropout(module):
+    return module.training and any(isinstance(m, torch.nn.Dropout) and m.p > 0 for m in module.modules())
+
+
 def text_longest(backbone):
     """Backbone hook: True if the backbone is Wan's interface and its text encoding was replaced."""
     if not all(hasattr(backbone, name) for name in ("tokenizer", "text_encoder")) or not _zero_padded_upstream(backbone):
         return False
     if getattr(backbone._encode_text, "_starvla_text_longest", False):
         return True
+    upstream = backbone._encode_text
 
     def _encode_text(instructions, max_length=512):
+        if _active_dropout(backbone.text_encoder):  # other dropout masks, another random stream: keep upstream's
+            return upstream(instructions, max_length=max_length)
         device = next(backbone.text_encoder.parameters()).device
         text_inputs = backbone.tokenizer(
             instructions,
