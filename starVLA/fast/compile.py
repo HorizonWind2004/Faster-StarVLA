@@ -28,14 +28,16 @@ def _raise_cache_limits(entries):
     _gc["layers"] += entries
 
 
-def _compiled_for_training(eager, dynamic):
-    # Random operations (the dropout of the DiT action heads) keep eager's kernels and generator: without this,
-    # compiled dropout draws its masks from Inductor's own random stream, so a compiled step uses other masks than
-    # the default step. Only random operations are affected.
-    import torch._inductor.config
+# Inductor settings for the action heads, applied to their compiled code only (forward and backward):
+#   fallback_random: random operations (the DiT heads' dropout) use eager's kernels and generator. Otherwise compiled
+#     dropout draws its masks from Inductor's own random stream, so a compiled step uses other masks than the default.
+#   triton.coalesce_tiling_analysis off: the analysis does not support dynamic shapes (Inductor's own note) and
+#     intermittently failed on a DiT block (a sympy assertion: sympy decides is_constant at random sample points).
+HEAD_OPTIONS = {"fallback_random": True, "triton.coalesce_tiling_analysis": False}
 
-    torch._inductor.config.fallback_random = True
-    compiled = torch.compile(eager, dynamic=dynamic)
+
+def _compiled_for_training(eager, dynamic, options=None):
+    compiled = torch.compile(eager, dynamic=dynamic, **({"options": options} if options else {}))
     state = {"works": None}  # None until the first compiled call has returned
 
     def call(*args, **kwargs):
@@ -60,10 +62,10 @@ def _compiled_for_training(eager, dynamic):
     return call
 
 
-def _compile_forwards(layers, dynamic):
+def _compile_forwards(layers, dynamic, options=None):
     _raise_cache_limits(len(layers))
     for layer in layers:
-        layer.forward = _compiled_for_training(layer.forward, dynamic)
+        layer.forward = _compiled_for_training(layer.forward, dynamic, options)
 
 
 def compile_method(owner, name, variants, dynamic=True):
@@ -160,7 +162,7 @@ def apply_head(framework):
             blocks = getattr(module, name, None) if isinstance(module, kind) else None
             if blocks is not None and len(blocks):
                 if not getattr(blocks, "_starvla_compiled", False):
-                    _compile_forwards(blocks, dynamic=True)
+                    _compile_forwards(blocks, dynamic=True, options=HEAD_OPTIONS)
                     blocks._starvla_compiled = True
                 found = True
     return found

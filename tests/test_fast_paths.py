@@ -391,7 +391,28 @@ def test_compile_fallbacks():
     x = torch.randn(2, 4)
     out = vlm.model(x, output_hidden_states=True)
     assert torch.equal(out["logits"], Wrapper.forward(vlm.model, x)["logits"])
-    print("ok compile and hidden_only fallbacks; compile_world_model finds Wan / Cosmos-Predict2 blocks")
+    class Head(torch.nn.Module):  # dropout in a compiled head block draws the same masks as eager
+        def __init__(self):
+            super().__init__()
+            self.linear, self.dropout = torch.nn.Linear(16, 16), torch.nn.Dropout(0.2)
+
+        def forward(self, x):
+            return self.dropout(self.linear(x)) + x
+
+    torch.manual_seed(0)
+    head = Head().train()
+    compiled = regional._compiled_for_training(head.forward, dynamic=True, options=regional.HEAD_OPTIONS)
+    for rows in (4, 7):
+        results = []
+        for function in (head.forward, compiled):
+            x = torch.randn(rows, 16, generator=torch.Generator().manual_seed(rows), requires_grad=True)
+            head.zero_grad()
+            torch.manual_seed(1)
+            function(x).sum().backward()
+            results.append((x.grad.clone(), head.linear.weight.grad.clone(), torch.randn(2)))
+        assert all(torch.equal(a, b) for a, b in zip(*results)), rows
+    print("ok compile and hidden_only fallbacks; compile_world_model finds Wan / Cosmos-Predict2 blocks; "
+          "a compiled head's dropout draws eager's masks")
 
 
 def test_adamw_compiled():
