@@ -606,6 +606,26 @@ def test_gemma4_sdpa():
     without = lm(input_ids=ids, attention_mask=mask, use_cache=True)
     assert with_cache.past_key_values is not None and without.past_key_values is None
     assert torch.equal(with_cache.last_hidden_state, without.last_hidden_state)
+    # a batch without padding: SDPA gets no mask (is_causal); with compile_lm, transformers builds the causal mask
+    sdpa_lm = model.train().model.language_model
+    seen = []
+    for layer in sdpa_lm.layers:
+        def spy(*args, _forward=layer.forward, **kwargs):
+            seen.append(kwargs.get("attention_mask"))
+            return _forward(*args, **kwargs)
+        layer.forward = spy
+    upstream_full = model(input_ids=ids, use_cache=False).logits
+    assert any(m is None for m in seen)
+    # the multimodal model builds the masks before it calls its language model: the setting covers its whole forward
+    for _ in range(2):  # once only
+        regional._causal_mask_for_none(sdpa_lm.layers, sdpa_lm, "model.model.language_model.layers", SimpleNamespace(model=model))
+    seen.clear()
+    filled_full = model(input_ids=ids, use_cache=False).logits
+    assert all(isinstance(m, torch.Tensor) for m in seen) and (filled_full - upstream_full).abs().max() < 1e-5
+    with torch.no_grad():  # not for inference calls
+        seen.clear()
+        model(input_ids=ids, use_cache=False)
+        assert any(m is None for m in seen)
     on_purpose = _tiny("qwen3")
     on_purpose.set_attn_implementation("eager")
     assert not attention.use_sdpa(SimpleNamespace(model=on_purpose))
@@ -778,7 +798,9 @@ def _check_no_training_cache():
 
     from starVLA.fast import compile as regional
 
-    lm = _tiny("qwen3_5").train().model.language_model
+    model = _tiny("qwen3_5").train()
+    assert not regional.apply_lm(SimpleNamespace(model=model))  # linear-attention layers: compile_lm leaves it alone
+    lm = model.model.language_model
     ids = torch.randint(5, 140, (2, 9))
     with_cache = lm(input_ids=ids, use_cache=True)
     regional._no_training_cache(lm)

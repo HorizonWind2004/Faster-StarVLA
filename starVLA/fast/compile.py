@@ -113,7 +113,7 @@ def _modules(vlm, path):
     return target
 
 
-def _apply(vlm, paths, dynamic=True):
+def _apply(vlm, paths, dynamic=True, prepare=None):
     """Compile the layers at the first of `paths` (dotted attribute paths from the interface) that exists."""
     from starVLA.fast import attention_implementation
 
@@ -130,6 +130,8 @@ def _apply(vlm, paths, dynamic=True):
     if not getattr(layers, "_starvla_compiled", False):
         _compile_forwards(layers, dynamic)
         _no_training_cache(owner)
+        if prepare is not None:
+            prepare(layers, owner, path, vlm)
         layers._starvla_compiled = True
     return True
 
@@ -163,15 +165,75 @@ def _no_training_cache(model):
     model.forward = no_cache
 
 
+def _linear_attention(vlm):
+    config = getattr(getattr(vlm, "model", None), "config", None)
+    for cfg in (config, getattr(config, "text_config", None)):
+        if "linear_attention" in (getattr(cfg, "layer_types", None) or ()):
+            return True
+    return False
+
+
 def apply_lm(vlm):
     """Compile the decoder layers of the backbone's language model: `model.model.language_model.layers` in the
     Qwen-VL (Qwen3.5 included), Gemma 4 and MiniCPM-V (transformers 5) families; the other places are where other
     Hugging Face multimodal wrappers keep them. A layer Dynamo cannot trace (e.g. a linear-attention kernel of an
-    extension) stays eager on its own; the others are compiled."""
-    return _apply(vlm, ("model.model.language_model.layers", "model.language_model.model.layers",
-                        "model.language_model.layers",
-                        "model.llm.model.layers",  # MiniCPM-V with its own (remote) code
-                        "model.language_model.model.encoder.layers"))  # Florence-2: starVLA runs the encoder only
+    extension) stays eager on its own; the others are compiled.
+
+    Not applied to a language model with linear-attention layers (Qwen3.5: three Gated DeltaNet layers per full
+    attention layer, run by the flash-linear-attention Triton kernels). Compiling it cost Qwen3.5-0.8B + OFT a first
+    step of 934 s and was still slower once warm, 461 ms per step against 329 ms with the same paths and this one left
+    out (B300, two GPUs, session 14); with the GR00T head the first step outlasted NCCL's 600 s timeout."""
+    if _linear_attention(vlm):
+        return False
+    return _apply(vlm, _LM_PATHS, prepare=_causal_mask_for_none)
+
+
+_LM_PATHS = ("model.model.language_model.layers", "model.language_model.model.layers",
+             "model.language_model.layers",
+             "model.llm.model.layers",  # MiniCPM-V with its own (remote) code
+             "model.language_model.model.encoder.layers")  # Florence-2: starVLA runs the encoder only
+
+
+_explicit = {"depth": 0}
+
+
+def _causal_mask_for_none(layers, owner, path, vlm=None):
+    """A causal language model under SDPA gets no mask (None) for a batch without padding: transformers then lets the
+    kernel apply causality itself (is_causal). The compiled layers are specialised on a mask tensor, and the first
+    batch of equal lengths compiled every layer again (Gemma 4 + PI at batch 4: step 161, nine graphs, 19 s, in the
+    middle of training). During the language model's training forwards transformers' own builder is told that the
+    mask cannot be skipped (masking_utils._ignore_causal_mask_sdpa), so such a batch gets the causal mask it builds
+    for any other batch, with the same layout: the same attention through another kernel. A mask made outside the
+    builder did not do: Dynamo also guards on the layout of the mask's base tensor. The setting holds for the whole
+    forward of the interface's model: Gemma 4's multimodal model builds the masks before it calls its language model.
+    Not for an encoder (Florence-2's), whose layers get no causal mask."""
+    from transformers import masking_utils
+
+    top = getattr(vlm, "model", None)
+    owner = top if isinstance(top, torch.nn.Module) else owner
+    if path.endswith("encoder.layers") or not hasattr(masking_utils, "_ignore_causal_mask_sdpa") \
+            or not callable(getattr(owner, "forward", None)) or getattr(owner.forward, "_starvla_explicit_mask", False):
+        return
+    original = masking_utils._ignore_causal_mask_sdpa
+    if not getattr(original, "_starvla_explicit_mask", False):
+        def ignore_causal_mask_sdpa(*args, **kwargs):
+            return False if _explicit["depth"] else original(*args, **kwargs)
+
+        ignore_causal_mask_sdpa._starvla_explicit_mask = True
+        masking_utils._ignore_causal_mask_sdpa = ignore_causal_mask_sdpa
+    forward = owner.forward
+
+    def explicit_mask(*args, **kwargs):
+        if not torch.is_grad_enabled():
+            return forward(*args, **kwargs)
+        _explicit["depth"] += 1
+        try:
+            return forward(*args, **kwargs)
+        finally:
+            _explicit["depth"] -= 1
+
+    explicit_mask._starvla_explicit_mask = True
+    owner.forward = explicit_mask
 
 
 def apply_vision(vlm):
