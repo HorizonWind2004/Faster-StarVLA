@@ -528,6 +528,11 @@ def test_other_backbones():
     given = {"position_ids": torch.zeros(3)}
     assert torch.equal(memo(grid, 2, kwargs=given), torch.zeros(3)) and not given  # popped, as upstream does
     assert torch.equal(memo(torch.tensor([[1, 2, 2]]), 2), get_vision_position_ids(torch.tensor([[1, 2, 2]]), 2))
+    with torch.inference_mode():  # an inference-mode grid has no version counter; its tables are inference tensors
+        inferred = memo(torch.tensor([[1, 4, 4], [1, 4, 4]]), 2)
+        assert torch.equal(inferred, first) and inferred is not first and inferred.is_inference()
+    trained = memo(grid, 2)  # a training step after it gets the table made outside inference mode
+    assert trained is first and not trained.is_inference()
     from starVLA import fast
 
     framework = torch.nn.Module()  # MiniCPM-RobotManip: the framework's own model holds the backbone as `vlm`
@@ -550,6 +555,63 @@ def test_other_backbones():
     os.environ.pop("STARVLA_FAST")
     print("ok other backbones: Florence-2 / MiniCPM-V compile paths, one failed compile per layer structure, "
           "hidden_only with logits_to_keep, memoized vision_utils helpers, a framework's own backbone")
+
+
+def test_gemma4_sdpa():
+    """Gemma 4 loads only with eager attention (its audio tower has no SDPA): the sdpa path moves the language model
+    and the vision tower to SDPA, keeps the audio tower on eager and leaves the logits equal up to rounding; an eager
+    model that could run SDPA as a whole is left alone. Needs transformers 5."""
+    try:
+        from transformers import Gemma4AudioConfig, Gemma4Config, Gemma4ForConditionalGeneration, Gemma4TextConfig
+        from transformers import Gemma4VisionConfig
+    except ImportError:
+        print("skipped gemma4_sdpa: this transformers has no Gemma 4")
+        return
+    import torch
+
+    from starVLA.fast import attention, attention_implementation
+
+    text = Gemma4TextConfig(hidden_size=64, intermediate_size=128, num_hidden_layers=2, num_attention_heads=4,
+                            num_key_value_heads=1, head_dim=16, global_head_dim=16, vocab_size=300,
+                            hidden_size_per_layer_input=16, vocab_size_per_layer_input=300, num_kv_shared_layers=0,
+                            sliding_window=8, layer_types=["sliding_attention", "full_attention"])
+    vision = Gemma4VisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4,
+                                num_key_value_heads=4, head_dim=8)
+    audio = Gemma4AudioConfig(hidden_size=32, num_hidden_layers=1, num_attention_heads=4)
+    config = Gemma4Config(text_config=text.to_dict(), vision_config=vision.to_dict(), audio_config=audio.to_dict())
+    torch.manual_seed(0)
+    model = Gemma4ForConditionalGeneration._from_config(config, attn_implementation="eager").float().eval()
+    ids = torch.randint(5, 250, (2, 12))
+    mask = torch.ones_like(ids)
+    mask[0, :3] = 0
+    with torch.no_grad():
+        eager = model(input_ids=ids, attention_mask=mask).logits
+    assert attention.use_sdpa(SimpleNamespace(model=model))
+    assert attention_implementation(model.model.language_model) == "sdpa"
+    assert attention_implementation(model.model.vision_tower) == "sdpa"
+    assert attention_implementation(model.model.audio_tower) == "eager"
+    with torch.no_grad():
+        sdpa = model(input_ids=ids, attention_mask=mask).logits
+    assert (sdpa[1] - eager[1]).abs().max() < 1e-5 and (sdpa[0, 3:] - eager[0, 3:]).abs().max() < 1e-5
+    from starVLA.fast import compile as regional
+
+    shared = Gemma4TextConfig(**dict(text.to_dict(), num_hidden_layers=3, num_kv_shared_layers=1,
+                                     layer_types=["sliding_attention", "full_attention", "full_attention"]))
+    torch.manual_seed(0)
+    lm = Gemma4ForConditionalGeneration._from_config(
+        Gemma4Config(text_config=shared.to_dict(), vision_config=vision.to_dict(), audio_config=audio.to_dict()),
+        attn_implementation="eager").float().train().model.language_model
+    with_cache = lm(input_ids=ids, attention_mask=mask, use_cache=True)
+    regional._no_training_cache(lm)  # compile_lm: training forwards without a cache, keys and values still shared
+    without = lm(input_ids=ids, attention_mask=mask, use_cache=True)
+    assert with_cache.past_key_values is not None and without.past_key_values is None
+    assert torch.equal(with_cache.last_hidden_state, without.last_hidden_state)
+    on_purpose = _tiny("qwen3")
+    on_purpose.set_attn_implementation("eager")
+    assert not attention.use_sdpa(SimpleNamespace(model=on_purpose))
+    assert attention_implementation(on_purpose) == "eager"
+    print("ok gemma4 sdpa: language model and vision tower on SDPA, audio tower eager, logits equal up to rounding; "
+          "training forwards without a cache give the same hidden states with shared keys and values")
 
 
 def test_text_longest():
@@ -694,13 +756,38 @@ def test_qwen3_vl_bitwise():
 
 
 def test_qwen3_5_bitwise():
-    """Qwen3.5 needs transformers 5 (run with that environment); skipped on upstream's pinned 4.57."""
+    """Qwen3.5 needs transformers 5 (run with that environment); skipped on upstream's pinned 4.57. It
+    runs in a process without flash-linear-attention (its Triton kernels need GPU tensors; the tiny models are on the
+    CPU), on transformers' torch path."""
     try:
         import transformers.models.qwen3_5  # noqa: F401
     except ImportError:
         print("skipped qwen3_5: this transformers has no Qwen3.5")
         return
-    _check("qwen3_5")
+    if "fla" in sys.modules and sys.modules["fla"] is None:  # the tiny models run on the CPU
+        _check("qwen3_5")
+        _check_no_training_cache()
+    else:
+        _in_subprocess("qwen3_5_torch")
+
+
+def _check_no_training_cache():
+    """compile_lm's use_cache=False for training forwards of a linear-attention language model: the same hidden states,
+    no cache built while gradients are on, the cache kept without them."""
+    import torch
+
+    from starVLA.fast import compile as regional
+
+    lm = _tiny("qwen3_5").train().model.language_model
+    ids = torch.randint(5, 140, (2, 9))
+    with_cache = lm(input_ids=ids, use_cache=True)
+    regional._no_training_cache(lm)
+    out = lm(input_ids=ids, use_cache=True)
+    assert with_cache.cache is not None and out.cache is None
+    assert torch.equal(out.last_hidden_state, with_cache.last_hidden_state)
+    with torch.no_grad():
+        assert lm(input_ids=ids, use_cache=True).cache is not None
+    print("ok qwen3_5 training forwards without a cache: same hidden states")
 
 
 def test_qwen2_5_vl_bitwise():
@@ -726,6 +813,10 @@ if __name__ == "__main__":
         if os.path.isdir(sys.argv[1]):
             _check_worker_prep(sys.argv[1])
         else:
+            if sys.argv[1] == "qwen3_5_torch":
+                sys.modules["fla"] = None  # transformers then uses its torch implementation of the linear attention
+                test_qwen3_5_bitwise()
+                sys.exit(0)
             {"flash": _check_flash_attention, "condition_once": _check_condition_once}.get(
                 sys.argv[1], lambda: _check(sys.argv[1]))()
     else:
@@ -740,5 +831,6 @@ if __name__ == "__main__":
         test_compile_fallbacks()
         test_adamw_compiled()
         test_other_backbones()
+        test_gemma4_sdpa()
         test_text_longest()
         test_worker_prep()

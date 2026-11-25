@@ -174,12 +174,18 @@ def _frozen(value):
 
 
 def _tensor_key(tensor):
-    """The contents of a small index tensor (grid_thw, target sizes): one host read, shared by the helpers of a forward."""
+    """The contents of a small index tensor (grid_thw, target sizes): one host read, shared by the helpers of a forward.
+
+    The key holds whether inference mode is on: a table made under it is an inference tensor, which autograd refuses
+    to save for a training step's backward."""
+    mode = torch.is_inference_mode_enabled()
+    if tensor.is_inference():  # no version counter: read it every time
+        return (_frozen(tensor.tolist()), tensor.dtype, str(tensor.device), mode)
     if _last_grid[0] is tensor and _last_grid[1] == tensor._version:
-        return _last_grid[2]
+        return _last_grid[2] + (mode,)
     key = (_frozen(tensor.tolist()), tensor.dtype, str(tensor.device))
     _last_grid[:] = [tensor, tensor._version, key]
-    return key
+    return key + (mode,)
 
 
 def _argument_key(value):

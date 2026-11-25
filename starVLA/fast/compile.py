@@ -11,6 +11,7 @@ nothing is compiled when the trainer's periodic evaluation first runs. Module st
 unchanged (the layer's `forward` attribute is replaced, the layer is not wrapped).
 """
 import gc
+import inspect
 
 import torch
 
@@ -128,8 +129,38 @@ def _apply(vlm, paths, dynamic=True):
         return False
     if not getattr(layers, "_starvla_compiled", False):
         _compile_forwards(layers, dynamic)
+        _no_training_cache(owner)
         layers._starvla_compiled = True
     return True
+
+
+def _no_training_cache(model):
+    """A language model (Qwen3.5, Gemma 4) builds a cache in every forward unless it is given
+    use_cache=False, and the config defaults it to True, training included. Each compiled layer then guards on the
+    state of its own cache layer (initialized or not, its device), which differs between the layers and between the
+    calls of one step: Dynamo recompiled the layers more than a hundred times, about 40 s each, before the first
+    training step ended (Qwen3.5-0.8B, B300). Gemma 4's language model gets such a cache as well. Training
+    forwards here that are not given a cache get use_cache=False: nothing reads the cache of a training step, and the
+    layers compute the same values without it (Gemma 4 shares keys and values between layers through its own
+    shared_kv_states, not the cache). Language models under transformers 5 and any with linear-attention layers;
+    the pinned 4.57 families keep their measured behaviour."""
+    import transformers
+
+    layer_types = getattr(getattr(model, "config", None), "layer_types", None) or ()
+    hybrid = "linear_attention" in layer_types
+    if not (hybrid or int(transformers.__version__.split(".")[0]) >= 5) or not callable(getattr(model, "forward", None)) \
+            or "use_cache" not in inspect.signature(model.forward).parameters or \
+            getattr(model.forward, "_starvla_no_cache", False):
+        return
+    forward = model.forward
+
+    def no_cache(*args, **kwargs):
+        if torch.is_grad_enabled() and kwargs.get("cache") is None and kwargs.get("past_key_values") is None:
+            kwargs["use_cache"] = False  # the multimodal model passes its config default (True) explicitly
+        return forward(*args, **kwargs)
+
+    no_cache._starvla_no_cache = True
+    model.forward = no_cache
 
 
 def apply_lm(vlm):
