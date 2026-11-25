@@ -95,6 +95,10 @@ FAST_PATHS = {  # applied in this order
                              "Wan: the UMT5 text encoder on the batch's longest instruction instead of 512 padded "
                              "tokens (upstream zeroes every position past the instruction afterwards); only while "
                              "the encoder has no active dropout (evaluation, inference)"),
+    "frozen_no_grad": FastPath(False, "framework", "frozen:apply",
+                               "a world model's sub-models that run under torch.no_grad only (Wan: the UMT5 text "
+                               "encoder and the VAE, 6.5 B parameters) are left out of the optimizer; upstream's "
+                               "update leaves them unchanged bit for bit, the clipping norm differs in rounding"),
     "condition_once": FastPath(False, "framework", "condition_once:apply",
                                "the action DiT projects its conditioning once per sample, not once per repeated "
                                "copy (the frameworks repeat it for several noise levels per sample)"),

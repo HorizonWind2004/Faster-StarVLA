@@ -787,6 +787,61 @@ def test_minicpm_v_sdpa():
     print("ok minicpm_v sdpa: language model on SDPA, the per-chunk vision tower kept on flash-attention")
 
 
+class _NoGradBackbone(torch.nn.Module):
+    """A world-model interface the way Wan's is written: text encoder and VAE called under no_grad only."""
+
+    def __init__(self):
+        super().__init__()
+        self.text_encoder, self.vae, self.transformer = torch.nn.Linear(4, 4), torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)
+
+    def forward(self, x):
+        device = next(self.text_encoder.parameters()).device
+        with torch.no_grad():
+            text = self.text_encoder(x.to(device))
+            latents = self.vae(x)
+        return self.transformer(text + latents)
+
+
+class _GradVaeBackbone(_NoGradBackbone):
+    def decode(self, x):
+        return self.vae(x)  # outside no_grad: the VAE may receive a gradient
+
+
+def test_frozen_no_grad():
+    """frozen_no_grad leaves a world model's no_grad-only sub-models out of the optimizer when the weight decay rounds
+    away; and the upstream AdamW update (zero gradient) leaves such parameters bitwise unchanged."""
+    from omegaconf import OmegaConf
+
+    from starVLA.fast import frozen
+
+    def framework(backbone, decay=1e-8, lrs=(2.5e-5, 1e-4)):
+        fw = torch.nn.Module()
+        fw.backbone = backbone
+        fw.config = OmegaConf.create({"trainer": {"learning_rate": {"base": lrs[0], "action_model": lrs[1]},
+                                                  "optimizer": {"weight_decay": decay}}})
+        return fw
+
+    fw = framework(_NoGradBackbone())
+    assert frozen.apply(fw)
+    assert not any(p.requires_grad for m in (fw.backbone.text_encoder, fw.backbone.vae) for p in m.parameters())
+    assert all(p.requires_grad for p in fw.backbone.transformer.parameters())
+    fw = framework(_GradVaeBackbone())
+    assert frozen.apply(fw) and all(p.requires_grad for p in fw.backbone.vae.parameters())  # text encoder only
+    assert not frozen.apply(framework(_NoGradBackbone(), decay=1e-2))  # this decay would change the weights
+    assert not frozen.apply(framework(_NoGradBackbone(), lrs=("x", 1e-4)))
+
+    # what upstream does to them: DeepSpeed hands AdamW a zero gradient; the result is the same bits
+    weights = torch.randn(4096) * 3
+    param = torch.nn.Parameter(weights.clone())
+    optimizer = torch.optim.AdamW([param], lr=1e-4, betas=(0.9, 0.95), eps=1e-8, weight_decay=1e-8, fused=True)  # as starVLA builds it
+    for _ in range(5):
+        param.grad = torch.zeros_like(param)
+        optimizer.step()
+    assert torch.equal(param.detach(), weights)
+    print("ok frozen_no_grad: no_grad-only sub-models frozen, a sub-model called with gradients kept, "
+          "AdamW with a zero gradient and weight decay 1e-8 leaves the weights bitwise unchanged")
+
+
 def test_text_longest():
     """text_longest on Wan's interface: the upstream _encode_text (called unbound on a stand-in with a tiny random
     UMT5) and the fast one give the same tensor shape, zeros past every instruction, and the kept positions equal up
@@ -1008,6 +1063,7 @@ if __name__ == "__main__":
         test_other_backbones()
         test_gemma4_sdpa()
         test_minicpm_v_sdpa()
+        test_frozen_no_grad()
         test_text_longest()
         test_worker_prep()
         test_worker_prep_framework()
