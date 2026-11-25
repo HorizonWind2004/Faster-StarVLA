@@ -4,7 +4,17 @@
 
 **starVLA 的训练步快 2.00×，由 AI agent 按 [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent) 的方法优化。**
 
-![Faster-StarVLA：2 张 GPU 上训练步加速 2.00x](docs/faster/figures/benchmark.svg)
+Faster-StarVLA 就是 [starVLA](https://github.com/starVLA/starVLA) 加上一个包 [`starVLA/fast/`](starVLA/fast/__init__.py)：
+25 条加速路径，覆盖数据加载、底座、动作头和 DeepSpeed 优化器这几步，用一个环境变量选择。`STARVLA_FAST=exact`
+时，确定性模式下的训练步与上游逐位相同，只是更快；`all` 再加上编译层等不降低任何运算精度的改动；`max` 再加精度设置。
+配置、脚本和各个框架都不用改。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/faster/figures/benchmark-dark.svg">
+    <img alt="Faster-StarVLA：2 张 GPU 上训练步加速 2.00x；exact 档逐位一致，all 档在 3σ 以内" src="docs/faster/figures/benchmark.svg" width="100%">
+  </picture>
+</p>
 
 | 实现 | 每个训练步耗时 (ms) ↓ | 加速比 ↑ |
 |---|---:|---:|
@@ -18,6 +28,19 @@ Qwen3-VL-4B 底座、每卡 batch 16、全部 45.0 亿参数可训练。`exact` 
 
 这些数字来自冻结基线计时的那一次测量。之后的三次测量里基线本身更快（796–816 ms，而不是 905 ms），同样的比较得到 `all` 1.87×–1.96×、`exact` 1.56×–1.65×（[各次测量](docs/faster/measurement.md#the-judge-on-the-unified-code)）。
 
+- **逐位一致还是统计等价，自己选。** `exact`：1.74×，记录的 23,336 个张量与上游逐位相同。`all`：2.00×，
+  每个训练端点都在上游自身种子间波动的 3σ 以内。
+- **不止一个配方。** 实测了 14 个框架 × 底座组合，每个都和自己的基线比：`all` 为 1.33×–3.20×，`max` 最高
+  4.43×（QwenDiscreteDiffusion + Qwen3-VL-4B）。
+- **训出来的策略能用。** 打开全部加速路径在 2 张卡上训 30,000 步，LIBERO 平均成功率 97.3%（官方 8 卡 checkpoint
+  按同样方式评测：98.65%）。
+- **不改任何框架。** 包只在四个入口被调用；每条加速路径先检查拿到的模型，不适用就自动跳过。
+
+## 目录
+
+[快速开始](#快速开始) · [工作原理](#工作原理) · [全部加速路径](#全部加速路径) · [优化过程](#优化过程) ·
+[其他框架和底座](#其他框架和底座) · [验证](#验证) · [常见问题](#常见问题) · [上游文档](#上游-starvla-文档)
+
 ## 快速开始
 
 环境、权重和数据按[上游说明](README.upstream.md)准备。所有框架和底座都用同一个环境变量选择加速路径：
@@ -25,7 +48,7 @@ Qwen3-VL-4B 底座、每卡 batch 16、全部 45.0 亿参数可训练。`exact` 
 ```bash
 export STARVLA_FAST=all      # 所有不改变任何运算精度的加速路径：2.00x
 # export STARVLA_FAST=exact  # 只开与基线逐位一致的加速路径：1.74x
-# export STARVLA_FAST=max    # all 再加精度设置（fp32 动作头用 TF32）：见下面的表
+# export STARVLA_FAST=max    # all 再加精度设置（fp32 动作头用 TF32）：见“工作原理”
 
 bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 ```
@@ -39,14 +62,81 @@ bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 
 可以按名字增减单条路径（`STARVLA_FAST=exact,-worker_prep,compile_lm`）。推理也用同一个变量：启动策略服务器前设置即可。
 
+## 工作原理
+
+### 三个档位
+
+三档的区别在于允许改变什么，各自用相应的标准判定：
+
+| 档位 | 增加的内容 | 与上游相比 | 评判等级 | 主配方 |
+|---|---|---|:---:|---:|
+| `exact` | 把工作挪出关键路径或干脆不做：输入处理放进 DataLoader 工作进程、不算用不到的词表 logits、掩码和位置表不再每次调用都重算、只在自检证明逐位一致的形状上合并注意力调用、精简 DeepSpeed 的记账开销 | 确定性模式下**逐位相同**：loss、每个梯度、更新量和优化器状态（在真实权重上核对过的框架，`predict_action` 输出的动作也相同） | N0 | 1.74× |
+| `all` | `exact` 加上不降低任何运算精度、但可能改变浮点舍入顺序的改动：Inductor 编译层、SDPA 替代 flash-attention、任意形状的批量注意力、条件特征只投影一次、编译版 AdamW 更新 | **统计等价**：每个训练端点都在上游种子间波动的 3σ 以内 | N1 | 2.00× |
+| `max` | `all` 加上精度设置：fp32 矩阵乘用 TF32（fp32 动作头）、PI0 / PI05 注意力的 softmax 用 bf16 | 统计等价，部分运算精度降低 | N2 | 没有额外收益（fp32 计算很少） |
+
+确定性模式下，上游自己跑两次是逐位相同的；离开这个模式，上游两次运行通常在末位就已经不同（GPU 归约的顺序不固定），所以逐位比较只在
+确定性模式下才有意义。评判等级沿用 [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent) 的定义：N0 逐位一致，
+N1 同精度下的重排，N2 改变了数据类型或数学模式。
+
+### 每条加速路径作用在哪里
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/faster/figures/module-map-dark.svg">
+    <img alt="各加速路径的作用位置：数据加载进程、底座（视觉塔、语言模型、世界模型）、动作头、DeepSpeed ZeRO-2 优化器步" src="docs/faster/figures/module-map.svg" width="100%">
+  </picture>
+</p>
+
+全部代码在一个包里：[`starVLA/fast/`](starVLA/fast/__init__.py)，只在四个不属于任何框架的位置被调用：构建底座处
+（`get_vlm_model`）、构建框架处（`build_framework`）、训练脚本拿到 DeepSpeed 引擎处、构建数据加载器处。
+任何框架和底座接口里都没有开关，也没有一行加速代码。一条加速路径就是一个带 `apply(target) -> bool` 的模块加上
+[`FAST_PATHS`](starVLA/fast/__init__.py) 里的一行；不适用时返回 `False`，日志里会列为“不适用”。
+
+## 全部加速路径
+
+| 加速路径 | 档位 | 作用位置 | 做什么、适用范围 |
+|---|---|---|---|
+| `worker_prep` | exact | 数据加载 | 提示词拼接、VLM processor 和旋转位置索引放到数据加载进程里做，不再占用训练进程；适用于所有把 batch 的图像和提示词交给底座接口（`build_qwenvl_inputs`）的框架，底座接口为 Qwen2.5-VL、Qwen3-VL、Cosmos-Reason2；会改写提示词的框架用一个函数登记改写方式 |
+| `worker_examples` | exact | 数据加载 | PI0 / PI05：框架自己的样本预处理（图像缩放与填充、状态和动作填充）放到 DataLoader 工作进程里做 |
+| `vision_attn` | exact | 视觉塔 | 每层一次批量注意力调用，取代逐张图片各算一次、每层还要和主机同步一次的做法；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔，注意力实现为 SDPA；只在当前 GPU 上自检确认批量调用逐位一致的图像形状上启用 |
+| `vision_pos` | exact | 视觉塔 | 位置表按网格尺寸只建一次，不再每次前向都建；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔 |
+| `attn_mask` | exact | 语言模型 | 因果 + 填充掩码由两次广播运算得到，取代四层嵌套的 `torch.vmap`；transformers 里用 `masking_utils` 构建掩码的底座（Qwen、Gemma、Llama、Phi 系列），且注意力实现为 SDPA |
+| `hidden_only` | exact | 语言模型 | 不再计算用不到的词表 logits；任何带 LM head 的底座，调用时只要隐状态、不带 labels |
+| `grad_norm` | exact | 优化器步 | 梯度裁剪的范数不再把每个梯度复制成 fp64（主配方上每步写入再读回 18 GB）；任何用 DeepSpeed ZeRO-2 训练的框架 |
+| `allreduce` | exact | 优化器步 | 梯度桶原地 all-reduce；任何用 DeepSpeed ZeRO-2 训练的框架 |
+| `sdpa` | all | 整个底座 | 用 flash-attention 加载的底座（或者只因某个子模型没有 SDPA 而用 eager 的底座，如 Gemma 4）切换到 PyTorch 的 scaled-dot-product attention：同一种注意力，换一个实现；下面针对 SDPA 的路径和编译层都依赖它 |
+| `vision_attn_relaxed` | all | 视觉塔 | 对所有尺寸一致的图像形状做批量视觉注意力（末位舍入可能不同） |
+| `compile_vision`、`compile_lm` | all | 视觉塔、语言模型 | 视觉 block 和解码器层在训练调用时用 Inductor 编译，并用 `gc.freeze()` 消除编译带来的垃圾回收停顿；适用于有 `model.visual.blocks` / `model.language_model.layers` 的底座（Qwen-VL 系列）以及其他 Hugging Face 多模态封装里的对应位置，且注意力实现为 SDPA；编译器处理不了的层保持 eager |
+| `compile_world_model` | all | 世界模型 | 视频世界模型底座（Wan、Cosmos-Predict2）的 transformer 各层在训练调用时用 Inductor 编译 |
+| `text_longest` | all | 世界模型 | Wan：4.7 B 的 UMT5 文本编码器只算到本批最长指令，不再算满 512 个填充位置（原版之后会把指令之后的位置清零）；只在编码器没有启用 dropout 时生效，也就是评测和推理。训练时原版让 UMT5 的 dropout 开着，这条路径不改动编码 |
+| `condition_once` | all | 动作头 | 基于 starVLA 交叉注意力 DiT 的动作头（GR00T、逐层 flow matching、离散扩散）：框架为多个噪声水平复制的条件特征，每个样本只投影一次 |
+| `compile_head` | all | 动作头 | 动作头的各层（GR00T、逐层 flow matching、离散扩散、LangForce、QwenDual 的 DiT 头，以及 Adapter 头的残差块）用 Inductor 编译；dropout 沿用 eager 的随机数 |
+| `openpi_one_pass` | all | 视觉塔 | PI0 / PI05：一个 batch 的多个相机视角合成一次 SigLIP 调用，不再每个视角调用一次 |
+| `unused_views` | all | 视觉塔 | PI0 / PI05：整个 batch 都没有的相机视角直接跳过，不再当作全黑图像编码 |
+| `openpi_compile` | all | 整个底座 | PI0 / PI05：SigLIP 各层和 PaliGemma / 动作专家的联合层在训练调用时用 Inductor 编译 |
+| `adamw_compiled` | all | 优化器步 | 所有用 DeepSpeed ZeRO-2 和 torch 融合 AdamW 训练的框架：每个 rank 的展平分区的更新编译成一个内核（B300 上 22.5 亿元素的分区，torch 融合内核 104.9 ms，编译版 9.4 ms） |
+| `tf32` | max | 动作头 | fp32 矩阵乘使用 TF32，fp32 动作头的时间主要花在这上面。属于精度设置，所以不在 `all` 里 |
+| `openpi_sdpa` | max | 整个底座 | PI0 / PI05：SigLIP 视觉塔和 PaliGemma / 动作专家的联合层改用融合的 scaled-dot-product attention，取代“矩阵乘、fp32 softmax、矩阵乘”；softmax 因此在 bf16 下计算 |
+| `unit_clip` | 按名字 | 优化器步 | 裁剪系数恰好为 1 时不再遍历梯度去乘它；代价是每步要在主机上读一次系数（一次同步），换来省掉一遍 2.6 ms 的遍历 |
+| `grad_cast` | 按名字 | 优化器步 | 分区梯度在展平的同时转成 fp32，一遍完成而不是两遍；在主配方上没有超出运行间波动的差别 |
+| `reduce_to_owner` | 按名字 | 优化器步 | 梯度桶只归约到负责它的 rank；在两张卡上实测比默认做法慢 |
+
+“按名字”的路径不属于任何档位，需要显式写出（`STARVLA_FAST=all,unit_clip`）。首版的逐路径环境变量
+（`STARVLA_PREP_IN_WORKERS=1` 等）仍然有效。
+
 ## 优化过程
 
-在 2 × B300 上用 LIBERO 配方测得。图中每个点是一次计时运行，对比冻结的基线计时（906.9 ms）；最终的三进程检查
+在 2 × B300 上用 LIBERO 配方测得。图中每一列是一次计时运行，对比冻结的基线计时（906.9 ms）；最终的三进程检查
 结果是 1.9975×。[工作记录](docs/faster/WORK_LOG.md)里包括没有效果的尝试。
 
-![优化历史：1.00x 到 2.07x](docs/faster/figures/history.svg)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/faster/figures/history-dark.svg">
+    <img alt="优化历史：1.00x 到 2.07x，每一轮从单步时间里省下的毫秒数" src="docs/faster/figures/history.svg" width="100%">
+  </picture>
+</p>
 
-## 改了什么
+主配方上改了什么，按时间花在哪里来分：
 
 - **输入处理（`worker_prep`）：** 提示词拼接、Qwen3-VL processor 和旋转位置索引（每步约 0.2 秒单线程
   CPU，期间 GPU 在等）从训练进程挪到数据加载进程。
@@ -56,18 +146,19 @@ bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 - **DeepSpeed ZeRO-2（`grad_norm`、`allreduce`）：** 梯度裁剪的范数不再把每个梯度
   转成 fp64（每步写入再读回 18 GB）；梯度桶原地 all-reduce。
 
-![优化分布：输入处理、视觉塔、语言模型、DeepSpeed ZeRO-2](docs/faster/figures/module-map.svg)
-
-全部代码在一个包里：[`starVLA/fast/`](starVLA/fast/__init__.py)，只在四个不属于任何框架的位置被调用：构建底座处
-（`get_vlm_model`）、构建框架处（`build_framework`）、训练脚本拿到 DeepSpeed 引擎处、构建数据加载器处。
-任何框架和底座接口里都没有开关，也没有一行加速代码。
-
 [每项改动为什么有效、各自实测多少](docs/faster/measurement.md#what-changed-in-detail)。
 
 ## 其他框架和底座
 
 starVLA 是一个包含很多策略和底座的框架。上面的主要数字来自一个配方（QwenOFT + Qwen3-VL-4B）。同一个设置用在其他
-框架上的结果（硬件、数据、batch 相同，每一行都与同一作业里测的基线比较）：
+框架上的结果（硬件、数据、batch 相同，每一行都与同一作业里测的基线比较；共 14 个配方、11 个框架、4 个底座）：
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/faster/figures/coverage-dark.svg">
+    <img alt="每个实测框架和底座上 exact、all、max 的加速比，各自与自己的基线比较" src="docs/faster/figures/coverage.svg" width="100%">
+  </picture>
+</p>
 
 | 框架 | 底座 | 配方里的注意力实现 | 基线 (ms/步) | `exact` | `all` | `max` | `exact` 逐位核对 |
 |---|---|---|---:|---:|---:|---:|---|
@@ -85,29 +176,6 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
 | WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
-
-| 加速路径 | 档位 | 适用范围 |
-|---|---|---|
-| `worker_prep` | exact | 所有把 batch 的图像和提示词交给底座接口（`build_qwenvl_inputs`）的框架，底座接口为 Qwen2.5-VL、Qwen3-VL、Cosmos-Reason2；会改写提示词的框架用一个函数登记改写方式 |
-| `attn_mask` | exact | transformers 里用 `masking_utils` 构建掩码的底座（Qwen、Gemma、Llama、Phi 系列），且注意力实现为 SDPA |
-| `hidden_only` | exact | 任何带 LM head 的底座，调用时只要隐状态、不带 labels |
-| `vision_attn` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔，注意力实现为 SDPA；只在当前 GPU 上自检确认批量调用逐位一致的图像形状上启用 |
-| `vision_pos` | exact | Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔 |
-| `grad_norm`、`allreduce` | exact | 任何用 DeepSpeed ZeRO-2 训练的框架 |
-| `worker_examples` | exact | PI0 / PI05：框架自己的样本预处理（图像缩放与填充、状态和动作填充）放到 DataLoader 工作进程里做 |
-| `sdpa` | all | 用 flash-attention 加载的 Qwen 底座切换到 PyTorch 的 scaled-dot-product attention（同一种注意力，换一个实现），下面针对 SDPA 的路径和编译层才能生效 |
-| `vision_attn_relaxed` | all | 对所有尺寸一致的图像形状做批量视觉注意力（末位舍入可能不同） |
-| `compile_lm`、`compile_vision` | all | 有 `model.language_model.layers` / `model.visual.blocks` 的底座（Qwen-VL 系列），且注意力实现为 SDPA |
-| `condition_once` | all | 基于 starVLA 交叉注意力 DiT 的动作头（GR00T、逐层 flow matching、离散扩散）：框架为多个噪声水平复制的条件特征只投影一次 |
-| `compile_head` | all | 动作头的各层（GR00T、逐层 flow matching、离散扩散、LangForce、QwenDual 的 DiT 头，以及 Adapter 头的残差块）用 Inductor 编译；dropout 沿用 eager 的随机数 |
-| `unused_views` | all | PI0 / PI05：整个 batch 都没有的相机视角直接跳过，不再当作全黑图像编码 |
-| `openpi_compile` | all | PI0 / PI05：SigLIP 各层和 PaliGemma / 动作专家的联合层在训练调用时用 Inductor 编译 |
-| `openpi_one_pass` | all | PI0 / PI05：一个 batch 的多个相机视角合成一次 SigLIP 调用，不再每个视角调用一次 |
-| `adamw_compiled` | all | 所有用 DeepSpeed ZeRO-2 和 torch 融合 AdamW 训练的框架：每个 rank 的展平分区的更新编译成一个内核（B300 上 22.5 亿元素的分区，torch 融合内核 104.9 ms，编译版 9.4 ms） |
-| `compile_world_model` | all | 视频世界模型底座（Wan、Cosmos-Predict2）的 transformer 各层 |
-| `text_longest` | all | Wan：4.7 B 的 UMT5 文本编码器只算到本批最长指令，不再算满 512 个填充位置（原版之后会把指令之后的位置清零）；只在编码器没有启用 dropout 时生效，也就是评测和推理。训练时原版让 UMT5 的 dropout 开着，这条路径不改动编码 |
-| `tf32` | max | fp32 矩阵乘使用 TF32，fp32 动作头的时间主要花在这上面。属于精度设置，所以不在 `all` 里 |
-| `openpi_sdpa` | max | PI0 / PI05：SigLIP 视觉塔和 PaliGemma / 动作专家的联合层改用融合的 scaled-dot-product attention，取代“矩阵乘、fp32 softmax、矩阵乘”；softmax 因此在 bf16 下计算 |
 
 每一行都与同一个批处理作业里测的基线比较。同一节点上，不同作业之间同一配方的基线会相差最多 10%，所以不同作业的毫秒数不能直接比，行内的倍数可以比（见[各次测量](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)）。
 
@@ -131,7 +199,16 @@ Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑�
 ## 验证
 
 所有结论都来自优化开始之前就构建并冻结的评判程序（[docs/faster/judge/](docs/faster/judge/)，
-[判定方式](docs/faster/measurement.md#the-judge)）。
+[判定方式](docs/faster/measurement.md#the-judge)）。它依次执行四道门，判定结果带一个等级：
+
+| 门 | 检查内容 |
+|---|---|
+| 0 结构 | 训练入口的初始化部分与上游的语法树相同；数据管线产出的样本和前几个 batch 与上游逐位相同 |
+| 1 收益 | 真实入口的全新进程、冷编译缓存、预热 20 步，然后两个 100 步的窗口；按“参照 → 候选 → 参照”的顺序跑，加速比必须超过 `max(1.02, 1 + 2 × 参照波动)` |
+| 2 逐位 | 确定性模式下两个 2 步用例，两张卡都记录：先核对精确项（随机数状态、学习率、优化器和 DeepSpeed 设置、可训练参数、数据类型、VLM 输入摘要），再逐位比较 loss 以及每个参数的 fp32 梯度、更新量和 Adam 状态。全部相同即 **PASS N0** |
+| 3 统计 | 只在第 2 道门不逐位一致时执行：固定种子跑 60 步轨迹，七个端点都在上游种子间波动（6 个种子）的 3σ 以内即 **PASS N1**；若改变了数据类型或数学模式（TF32、低精度归约、SDPA 后端）则为 **N2** |
+
+优化开始前已经验证过评判程序会拒绝该拒绝的情况（改了训练设置、改了裁剪阈值、VLM 收不到梯度、所有学习率乘 1.02），并放行等价的重排。
 
 **`STARVLA_FAST=exact`。** 打开适用于这个配方的七条逐位一致的加速路径，在确定性模式下跑两个 2 步训练用例（其中一个在两步之间插入配方里的周期性
 评估），两张卡都记录：23,336 个张量（loss，以及全部 729 个参数的 fp32 梯度、更新量和两个 Adam 状态）与上游
@@ -155,6 +232,10 @@ Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑�
 
 **在当前代码上。** 上面的检查是在首版上做的，当时加速路径还没有统一到 `STARVLA_FAST`，也没有扩展到其他框架。在当前代码上，评判程序再次确认 `STARVLA_FAST=exact` 逐位一致：23,336 个张量中 23,336 个相同；之后跑过这项检查的6次测量都是如此，最后一次用的就是发布的这个提交。`STARVLA_FAST=all` 的三进程检查在之后的测量里都没有给出结论：基线比冻结计时快，超出了允许的范围，评判程序按规则拒绝判定（INVALID）。它自己测到的加速比是 1.87×–1.96×。代理式检查（一次候选运行与冻结计时比较，再跑逐位门和统计门）在发布的提交上对 `all` 判定通过（等级 N1，各端点在 1.77σ 以内；每步 340 ms，是冻结计时 906.9 ms 的 2.66×）；在较早的一个提交上，对 `all,tf32`（即 `max` 在这个配方上启用的全部路径）也通过（等级 N2，1.41σ 以内）。[详情](docs/faster/measurement.md#the-judge-on-the-unified-code)。
 
+**其他框架的逐位核对。** 评判程序只针对主配方；此外，上表里凡是权重在这里的框架，都在真实权重上把 `exact` 与基线逐位比较过：
+确定性模式下的一个训练步（loss 和每个梯度）加一次 `predict_action` 调用（上表最后一列；[全部核对](docs/faster/measurement.md#other-frameworks-and-backbones-bitwise-checks-on-real-weights)）。
+各条只改变舍入的路径会让一个训练步偏离多少，以及把 SDPA 换成 eager 注意力本身会带来多大偏离，也[在那里有实测](docs/faster/measurement.md#how-far-a-rounding-level-path-moves-one-training-step)。
+
 **LIBERO 评测。** 用全部加速路径完整训练一次（30,000 步，种子 42，2 × B300，全局 batch 32），按 starVLA 的 LIBERO 协议
 评测（每个套件 500 个 episode），并在同一条评测管线里评测官方发布的 checkpoint。官方 checkpoint 由 starVLA 作者在
 8 张 GPU 上训练（全局 batch 128，取第 50,000 步）；这里只是检查加速后的代码能训出可用的策略，不是同种子的对照。这 30,000 步
@@ -166,6 +247,33 @@ Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑�
 | starVLA Qwen3-VL-OFT, published | 97.8 | 98.6 | 96.2 | 93.8 | 96.6 |
 | Released checkpoint (`StarVLA/Qwen3-VL-OFT-LIBERO-4in1`, step 50,000), our evaluation | 98.6 | 100.0 | 99.4 | 96.6 | 98.65 |
 | **Faster-StarVLA run** (all fast paths, 30,000 steps on 2 GPUs) | 98.8 | 98.6 | 98.4 | 93.4 | 97.30 |
+
+## 常见问题
+
+**会改变训练结果吗？** `exact` 不会：确定性模式下，一个训练步记录的每个张量都逐位相同；在真实权重上核对过的框架，
+`predict_action` 输出的动作也相同。`all` 做的是同样精度下的同样运算，只是编译后的内核舍入顺序不同；评判程序用统计方式比较，
+结果在上游自身的种子间波动之内，用它完整训练的 LIBERO 策略也能正常工作（见上）。`max` 会降低部分运算的精度（TF32、bf16 softmax），
+评判等级为 N2。
+
+**怎么关掉某一条，或者单独加一条？** 写在档位后面：`STARVLA_FAST=all,-compile_lm` 去掉一条，`STARVLA_FAST=exact,compile_head`
+加一条。写错名字会直接报错，不会被悄悄忽略。启动日志会按入口列出实际生效的路径和对当前模型不适用的路径。
+
+**推理能加速吗？** 给策略服务器设置同一个变量即可。编译层、`condition_once` 和 DeepSpeed 相关路径只作用于训练（需要梯度的调用）；
+`predict_action` 里其余路径照样生效，比如不算 LM head、直接构建掩码、批量视觉注意力、位置表缓存、`sdpa` 和 `text_longest`。
+`tools/eval/` 另外提供一个把模拟器并发请求合批的策略服务器（[见下](#更快的评测)）。
+
+**第一步会变慢吗？** `all` 档的前几个训练步要用 Inductor 编译各层。PI0 在编译缓存为空时 445 秒后跑到第一步，用上一次运行
+留下的缓存则是 165 秒；缓存在多次运行之间保留（`TORCHINDUCTOR_CACHE_DIR`）。上面的计时都从预热 20 步之后开始，
+计时窗口里出现编译的运行会被判为无效。
+
+**显存呢？** `all` 档更低：主配方上每卡峰值 66.5 → 59.0 GiB，主要来自编译解码器层的那一轮。各配方的数字见
+[测量细节](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)。
+
+**哪些底座需要 transformers 5？** Qwen3.5 和 Gemma 4（上游固定 4.57）。加速路径在两个版本上都能用；每个新底座的进展见
+[其他框架和底座](#其他框架和底座)。
+
+**其他 GPU 呢？** 这里的一切都在 B300 上测得（torch 2.9.1、CUDA 12.9）。`vision_attn` 会在当前 GPU 上做逐位自检，按设备决定
+合并哪些形状。其他 GPU 上的加速比和逐位一致性都没有验证过；[docs/faster/judge/](docs/faster/judge/) 说明了怎样在别的机器上重跑评判程序。
 
 ## 更快的评测
 

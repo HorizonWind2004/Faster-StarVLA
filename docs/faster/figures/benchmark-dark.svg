@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="442" viewBox="0 0 960 442" role="img" aria-label="Faster-StarVLA: 2.00x faster training steps">
+<title>Faster-StarVLA: 2.00x faster training steps</title>
+<style>text{font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;} .m{font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;}</style>
+<rect x="0.0" y="0.0" width="960.0" height="442.0" fill="#0d1117"/>
+<rect x="0.5" y="0.5" width="959.0" height="441.0" fill="#151b23" rx="14" stroke="#30363d" stroke-width="1"/>
+<text x="40.0" y="52.0" font-size="13" fill="#9198a1" font-weight="600" letter-spacing="2">FASTER-STARVLA</text>
+<text x="36.0" y="142.0" font-size="100" fill="#f0f6fc" font-weight="700" letter-spacing="-3">2.00×</text>
+<rect x="40.0" y="160.0" width="64.0" height="5.0" fill="#d95926" rx="2.5"/>
+<text x="40.0" y="194.0" font-size="19" fill="#f0f6fc" font-weight="600">faster starVLA training steps</text>
+<text x="40.0" y="220.0" font-size="15"><tspan fill="#9198a1">with </tspan><tspan fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">STARVLA_FAST=all</tspan><tspan fill="#9198a1">: one variable,</tspan></text>
+<text x="40.0" y="241.0" font-size="15" fill="#9198a1">every framework and backbone</text>
+<text x="452.0" y="52.0" font-size="13" fill="#9198a1" font-weight="600">time per training step, ms</text>
+<text x="452.0" y="70.0" font-size="12" fill="#7d8590">lower is better</text>
+<line x1="610.0" y1="98.0" x2="610.0" y2="244.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="610.0" y="90.0" font-size="11.5" fill="#7d8590" text-anchor="middle">0</text>
+<line x1="677.5" y1="98.0" x2="677.5" y2="244.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="677.5" y="90.0" font-size="11.5" fill="#7d8590" text-anchor="middle">250</text>
+<line x1="745.0" y1="98.0" x2="745.0" y2="244.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="745.0" y="90.0" font-size="11.5" fill="#7d8590" text-anchor="middle">500</text>
+<line x1="812.5" y1="98.0" x2="812.5" y2="244.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="812.5" y="90.0" font-size="11.5" fill="#7d8590" text-anchor="middle">750</text>
+<line x1="880.0" y1="98.0" x2="880.0" y2="244.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="880.0" y="90.0" font-size="11.5" fill="#7d8590" text-anchor="middle">1,000</text>
+<line x1="610.0" y1="98.0" x2="610.0" y2="244.0" stroke="#3d444d" stroke-width="1.5" stroke-linecap="butt"/>
+<text x="598.0" y="127.0" font-size="13" fill="#9198a1" text-anchor="end">upstream starVLA</text>
+<path d="M610.0,112.0 H850.5 Q854.5,112.0 854.5,116.0 V132.0 Q854.5,136.0 850.5,136.0 H610.0 Z" fill="#656c76"/>
+<text x="862.5" y="129.0" font-size="14"><tspan fill="#f0f6fc" font-weight="600">905 ms</tspan></text>
+<text x="598.0" y="172.0" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end" class="m">STARVLA_FAST=exact</text>
+<text x="598.0" y="188.0" font-size="11.5" fill="#7d8590" text-anchor="end">bitwise identical</text>
+<path d="M610.0,162.0 H746.9 Q750.9,162.0 750.9,166.0 V182.0 Q750.9,186.0 746.9,186.0 H610.0 Z" fill="#3987e5"/>
+<text x="758.9" y="179.0" font-size="14"><tspan fill="#f0f6fc" font-weight="600">522 ms</tspan><tspan fill="#9198a1">  1.74×</tspan></text>
+<text x="598.0" y="222.0" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end" class="m">STARVLA_FAST=all</text>
+<text x="598.0" y="238.0" font-size="11.5" fill="#7d8590" text-anchor="end">within 3σ of upstream</text>
+<path d="M610.0,212.0 H728.4 Q732.4,212.0 732.4,216.0 V232.0 Q732.4,236.0 728.4,236.0 H610.0 Z" fill="#d95926"/>
+<text x="740.4" y="229.0" font-size="14"><tspan fill="#f0f6fc" font-weight="600">453 ms</tspan><tspan fill="#9198a1">  2.00×</tspan></text>
+<line x1="732.4" y1="246.0" x2="854.5" y2="246.0" stroke="#9198a1" stroke-width="1.2" stroke-linecap="butt"/>
+<line x1="732.4" y1="241.0" x2="732.4" y2="251.0" stroke="#9198a1" stroke-width="1.2" stroke-linecap="butt"/>
+<line x1="854.5" y1="241.0" x2="854.5" y2="251.0" stroke="#9198a1" stroke-width="1.2" stroke-linecap="butt"/>
+<text x="793.4" y="264.0" font-size="12.5" fill="#9198a1" font-weight="600" text-anchor="middle">−452 ms per step</text>
+<line x1="40.0" y1="282.0" x2="920.0" y2="282.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
+<text x="40.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">1.74×</text>
+<text x="40.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">bit-exact level</text>
+<text x="40.0" y="381.0" font-size="12" fill="#9198a1">23,336 tensors bitwise identical</text>
+<line x1="246.0" y1="306.0" x2="246.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
+<text x="260.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">14</text>
+<text x="260.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">recipes measured</text>
+<text x="260.0" y="381.0" font-size="12" fill="#9198a1">11 frameworks · 4 backbones</text>
+<line x1="466.0" y1="306.0" x2="466.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
+<text x="480.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">3.20×</text>
+<text x="480.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">best all recipe</text>
+<text x="480.0" y="381.0" font-size="12" fill="#9198a1">QwenOFT · Qwen2.5-VL-3B</text>
+<line x1="686.0" y1="306.0" x2="686.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
+<text x="700.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">97.3%</text>
+<text x="700.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">LIBERO success</text>
+<text x="700.0" y="381.0" font-size="12" fill="#9198a1">policy trained with all fast paths</text>
+<text x="920.0" y="426.0" font-size="11.5" fill="#7d8590" text-anchor="end">2 × NVIDIA B300 · QwenOFT on Qwen3-VL-4B · LIBERO recipe · per-GPU batch 16 · 4.50 B trainable parameters</text>
+</svg>

@@ -1,179 +1,57 @@
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
-  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="518.4pt" height="165.6pt" viewBox="0 0 518.4 165.6" xmlns="http://www.w3.org/2000/svg" version="1.1">
- <metadata>
-  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-   <cc:Work>
-    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-25T07:40:17.589651</dc:date>
-    <dc:format>image/svg+xml</dc:format>
-    <dc:creator>
-     <cc:Agent>
-      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
-     </cc:Agent>
-    </dc:creator>
-   </cc:Work>
-  </rdf:RDF>
- </metadata>
- <defs>
-  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
- </defs>
- <g id="figure_1">
-  <g id="patch_1">
-   <path d="M 0 165.6 
-L 518.4 165.6 
-L 518.4 0 
-L 0 0 
-z
-" style="fill: #ffffff"/>
-  </g>
-  <g id="axes_1">
-   <g id="patch_2">
-    <path d="M 126.197031 120.719141 
-L 506.52 120.719141 
-L 506.52 27.909937 
-L 126.197031 27.909937 
-z
-" style="fill: #ffffff"/>
-   </g>
-   <g id="patch_3">
-    <path d="M 126.197031 116.50054 
-L 287.556088 116.50054 
-L 287.556088 86.562088 
-L 126.197031 86.562088 
-z
-" clip-path="url(#p8d68439dbe)" style="fill: #8c0000"/>
-   </g>
-   <g id="patch_4">
-    <path d="M 126.197031 62.06699 
-L 448.504632 62.06699 
-L 448.504632 32.128538 
-L 126.197031 32.128538 
-z
-" clip-path="url(#p8d68439dbe)" style="fill: #9aa4af"/>
-   </g>
-   <g id="matplotlib.axis_1">
-    <g id="xtick_1">
-     <g id="line2d_1">
-      <defs>
-       <path id="m9c55c0b821" d="M 0 0 
-L 0 3.5 
-" style="stroke: #6e7781; stroke-width: 0.8"/>
-      </defs>
-      <g>
-       <use xlink:href="#m9c55c0b821" x="126.197031" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_1">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="126.197031" y="136.076562" transform="rotate(-0 126.197031 136.076562)">0</text>
-     </g>
-    </g>
-    <g id="xtick_2">
-     <g id="line2d_2">
-      <g>
-       <use xlink:href="#m9c55c0b821" x="197.395422" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_2">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="197.395422" y="136.076562" transform="rotate(-0 197.395422 136.076562)">200</text>
-     </g>
-    </g>
-    <g id="xtick_3">
-     <g id="line2d_3">
-      <g>
-       <use xlink:href="#m9c55c0b821" x="268.593812" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_3">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="268.593812" y="136.076562" transform="rotate(-0 268.593812 136.076562)">400</text>
-     </g>
-    </g>
-    <g id="xtick_4">
-     <g id="line2d_4">
-      <g>
-       <use xlink:href="#m9c55c0b821" x="339.792203" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_4">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="339.792203" y="136.076562" transform="rotate(-0 339.792203 136.076562)">600</text>
-     </g>
-    </g>
-    <g id="xtick_5">
-     <g id="line2d_5">
-      <g>
-       <use xlink:href="#m9c55c0b821" x="410.990593" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_5">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="410.990593" y="136.076562" transform="rotate(-0 410.990593 136.076562)">800</text>
-     </g>
-    </g>
-    <g id="xtick_6">
-     <g id="line2d_6">
-      <g>
-       <use xlink:href="#m9c55c0b821" x="482.188984" y="120.719141" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_6">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="482.188984" y="136.076562" transform="rotate(-0 482.188984 136.076562)">1000</text>
-     </g>
-    </g>
-    <g id="text_7">
-     <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6e7781" x="316.358516" y="151.077422" transform="rotate(-0 316.358516 151.077422)">time per training step (2 x B300, per-GPU batch 16), lower is better</text>
-    </g>
-   </g>
-   <g id="matplotlib.axis_2">
-    <g id="ytick_1">
-     <g id="line2d_7">
-      <defs>
-       <path id="m45ab4ed452" d="M 0 0 
-L -3.5 0 
-" style="stroke: #6e7781; stroke-width: 0.8"/>
-      </defs>
-      <g>
-       <use xlink:href="#m45ab4ed452" x="126.197031" y="101.531314" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_8">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #6e7781" x="119.197031" y="105.710025" transform="rotate(-0 119.197031 105.710025)">Faster-StarVLA</text>
-     </g>
-    </g>
-    <g id="ytick_2">
-     <g id="line2d_8">
-      <g>
-       <use xlink:href="#m45ab4ed452" x="126.197031" y="47.097764" style="fill: #6e7781; stroke: #6e7781; stroke-width: 0.8"/>
-      </g>
-     </g>
-     <g id="text_9">
-      <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #6e7781" x="119.197031" y="51.276475" transform="rotate(-0 119.197031 51.276475)">starVLA (upstream)</text>
-     </g>
-    </g>
-   </g>
-   <g id="patch_5">
-    <path d="M 126.197031 120.719141 
-L 126.197031 27.909937 
-" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
-   </g>
-   <g id="patch_6">
-    <path d="M 126.197031 120.719141 
-L 506.52 120.719141 
-" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
-   </g>
-   <g id="text_10">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f2328" x="291.827991" y="104.388736" transform="rotate(-0 291.827991 104.388736)">453 ms</text>
-   </g>
-   <g id="text_11">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f2328" x="452.776535" y="49.955186" transform="rotate(-0 452.776535 49.955186)">905 ms</text>
-   </g>
-   <g id="text_12">
-    <text style="font-weight: 700; font-size: 13.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f2328" x="126.197031" y="21.909937" transform="rotate(-0 126.197031 21.909937)">2.00x faster training steps</text>
-   </g>
-  </g>
- </g>
- <defs>
-  <clipPath id="p8d68439dbe">
-   <rect x="126.197031" y="27.909937" width="380.322969" height="92.809203"/>
-  </clipPath>
- </defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="442" viewBox="0 0 960 442" role="img" aria-label="Faster-StarVLA: 2.00x faster training steps">
+<title>Faster-StarVLA: 2.00x faster training steps</title>
+<style>text{font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;} .m{font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;}</style>
+<rect x="0.0" y="0.0" width="960.0" height="442.0" fill="#ffffff"/>
+<rect x="0.5" y="0.5" width="959.0" height="441.0" fill="#f6f8fa" rx="14" stroke="#d1d9e0" stroke-width="1"/>
+<text x="40.0" y="52.0" font-size="13" fill="#59636e" font-weight="600" letter-spacing="2">FASTER-STARVLA</text>
+<text x="36.0" y="142.0" font-size="100" fill="#1f2328" font-weight="700" letter-spacing="-3">2.00×</text>
+<rect x="40.0" y="160.0" width="64.0" height="5.0" fill="#eb6834" rx="2.5"/>
+<text x="40.0" y="194.0" font-size="19" fill="#1f2328" font-weight="600">faster starVLA training steps</text>
+<text x="40.0" y="220.0" font-size="15"><tspan fill="#59636e">with </tspan><tspan fill="#1f2328" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">STARVLA_FAST=all</tspan><tspan fill="#59636e">: one variable,</tspan></text>
+<text x="40.0" y="241.0" font-size="15" fill="#59636e">every framework and backbone</text>
+<text x="452.0" y="52.0" font-size="13" fill="#59636e" font-weight="600">time per training step, ms</text>
+<text x="452.0" y="70.0" font-size="12" fill="#818b98">lower is better</text>
+<line x1="610.0" y1="98.0" x2="610.0" y2="244.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
+<text x="610.0" y="90.0" font-size="11.5" fill="#818b98" text-anchor="middle">0</text>
+<line x1="677.5" y1="98.0" x2="677.5" y2="244.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
+<text x="677.5" y="90.0" font-size="11.5" fill="#818b98" text-anchor="middle">250</text>
+<line x1="745.0" y1="98.0" x2="745.0" y2="244.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
+<text x="745.0" y="90.0" font-size="11.5" fill="#818b98" text-anchor="middle">500</text>
+<line x1="812.5" y1="98.0" x2="812.5" y2="244.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
+<text x="812.5" y="90.0" font-size="11.5" fill="#818b98" text-anchor="middle">750</text>
+<line x1="880.0" y1="98.0" x2="880.0" y2="244.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
+<text x="880.0" y="90.0" font-size="11.5" fill="#818b98" text-anchor="middle">1,000</text>
+<line x1="610.0" y1="98.0" x2="610.0" y2="244.0" stroke="#afb8c1" stroke-width="1.5" stroke-linecap="butt"/>
+<text x="598.0" y="127.0" font-size="13" fill="#59636e" text-anchor="end">upstream starVLA</text>
+<path d="M610.0,112.0 H850.5 Q854.5,112.0 854.5,116.0 V132.0 Q854.5,136.0 850.5,136.0 H610.0 Z" fill="#9aa3ad"/>
+<text x="862.5" y="129.0" font-size="14"><tspan fill="#1f2328" font-weight="600">905 ms</tspan></text>
+<text x="598.0" y="172.0" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end" class="m">STARVLA_FAST=exact</text>
+<text x="598.0" y="188.0" font-size="11.5" fill="#818b98" text-anchor="end">bitwise identical</text>
+<path d="M610.0,162.0 H746.9 Q750.9,162.0 750.9,166.0 V182.0 Q750.9,186.0 746.9,186.0 H610.0 Z" fill="#2a78d6"/>
+<text x="758.9" y="179.0" font-size="14"><tspan fill="#1f2328" font-weight="600">522 ms</tspan><tspan fill="#59636e">  1.74×</tspan></text>
+<text x="598.0" y="222.0" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end" class="m">STARVLA_FAST=all</text>
+<text x="598.0" y="238.0" font-size="11.5" fill="#818b98" text-anchor="end">within 3σ of upstream</text>
+<path d="M610.0,212.0 H728.4 Q732.4,212.0 732.4,216.0 V232.0 Q732.4,236.0 728.4,236.0 H610.0 Z" fill="#eb6834"/>
+<text x="740.4" y="229.0" font-size="14"><tspan fill="#1f2328" font-weight="600">453 ms</tspan><tspan fill="#59636e">  2.00×</tspan></text>
+<line x1="732.4" y1="246.0" x2="854.5" y2="246.0" stroke="#59636e" stroke-width="1.2" stroke-linecap="butt"/>
+<line x1="732.4" y1="241.0" x2="732.4" y2="251.0" stroke="#59636e" stroke-width="1.2" stroke-linecap="butt"/>
+<line x1="854.5" y1="241.0" x2="854.5" y2="251.0" stroke="#59636e" stroke-width="1.2" stroke-linecap="butt"/>
+<text x="793.4" y="264.0" font-size="12.5" fill="#59636e" font-weight="600" text-anchor="middle">−452 ms per step</text>
+<line x1="40.0" y1="282.0" x2="920.0" y2="282.0" stroke="#d1d9e0" stroke-width="1" stroke-linecap="butt"/>
+<text x="40.0" y="338.0" font-size="32" fill="#1f2328" font-weight="700">1.74×</text>
+<text x="40.0" y="362.0" font-size="13.5" fill="#1f2328" font-weight="600">bit-exact level</text>
+<text x="40.0" y="381.0" font-size="12" fill="#59636e">23,336 tensors bitwise identical</text>
+<line x1="246.0" y1="306.0" x2="246.0" y2="388.0" stroke="#d1d9e0" stroke-width="1" stroke-linecap="butt"/>
+<text x="260.0" y="338.0" font-size="32" fill="#1f2328" font-weight="700">14</text>
+<text x="260.0" y="362.0" font-size="13.5" fill="#1f2328" font-weight="600">recipes measured</text>
+<text x="260.0" y="381.0" font-size="12" fill="#59636e">11 frameworks · 4 backbones</text>
+<line x1="466.0" y1="306.0" x2="466.0" y2="388.0" stroke="#d1d9e0" stroke-width="1" stroke-linecap="butt"/>
+<text x="480.0" y="338.0" font-size="32" fill="#1f2328" font-weight="700">3.20×</text>
+<text x="480.0" y="362.0" font-size="13.5" fill="#1f2328" font-weight="600">best all recipe</text>
+<text x="480.0" y="381.0" font-size="12" fill="#59636e">QwenOFT · Qwen2.5-VL-3B</text>
+<line x1="686.0" y1="306.0" x2="686.0" y2="388.0" stroke="#d1d9e0" stroke-width="1" stroke-linecap="butt"/>
+<text x="700.0" y="338.0" font-size="32" fill="#1f2328" font-weight="700">97.3%</text>
+<text x="700.0" y="362.0" font-size="13.5" fill="#1f2328" font-weight="600">LIBERO success</text>
+<text x="700.0" y="381.0" font-size="12" fill="#59636e">policy trained with all fast paths</text>
+<text x="920.0" y="426.0" font-size="11.5" fill="#818b98" text-anchor="end">2 × NVIDIA B300 · QwenOFT on Qwen3-VL-4B · LIBERO recipe · per-GPU batch 16 · 4.50 B trainable parameters</text>
 </svg>
