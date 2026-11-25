@@ -24,15 +24,17 @@ def use_sdpa(vlm):
     source = _replaced(model)
     if source is None:
         return False
+    keep = _per_chunk(model) if source == "flash_attention_2" else set()
     try:
-        if source != "flash_attention_2":
-            raise ValueError  # the whole model cannot run SDPA: never switch it as a whole
+        if source != "flash_attention_2" or keep:
+            raise ValueError  # the whole model cannot (or should not) run SDPA: never switch it as a whole
         switch("sdpa")
     except (ValueError, ImportError):  # a sub-model without SDPA (Gemma 4's audio tower): switch the others one by one
         for module in model.modules():
             sub_switch = getattr(module, "set_attn_implementation", None)
             if module is not model and callable(sub_switch) and attention_implementation(module) == source and \
-                    getattr(module, "_supports_sdpa", True) is not False:
+                    getattr(module, "_supports_sdpa", True) is not False and \
+                    not any(m in keep for m in module.modules()):
                 try:
                     sub_switch("sdpa")
                 except (ValueError, ImportError):
@@ -44,6 +46,33 @@ def use_sdpa(vlm):
     if language_model is not None:  # the paths written for SDPA look at the language model and the vision tower
         return attention_implementation(language_model) == "sdpa"
     return source not in _implementations(model)
+
+
+_PER_CHUNK = "torch.split(tensor, lengths.tolist()"  # transformers' vision attention without flash-attention
+
+
+def _per_chunk(model):
+    """Attention modules that, off flash-attention, read the chunk lengths back to the host in every layer and run
+    one attention call per chunk (image slice, or window: MiniCPM-V 4.6 has one per 2 x 2 patches), and that
+    vision_attn does not batch. Their sub-models keep flash-attention, whose single varlen call per layer is the
+    faster form: switching MiniCPM-V 4.6's vision tower made MiniCPMGR00T 3x slower (570 -> 1,721 ms per step)."""
+    import inspect
+
+    from starVLA.fast.vision_attn import _FAMILIES
+
+    found, seen = set(), {}
+    for module in model.modules():
+        cls = type(module)
+        if cls not in seen:
+            forward = getattr(cls.forward, "_starvla_original", cls.forward)
+            try:
+                source = inspect.getsource(forward)
+            except (OSError, TypeError):
+                source = ""
+            seen[cls] = _PER_CHUNK in source and cls.__module__ not in _FAMILIES
+        if seen[cls]:
+            found.add(module)
+    return found
 
 
 def _replaced(model):

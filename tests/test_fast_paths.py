@@ -167,13 +167,13 @@ def _check_flash_attention():
     os.environ["STARVLA_FAST"] = "exact"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["hidden_only", "vision_pos"], applied
-    assert skipped == ["attn_mask", "vision_attn", "worker_prep"], skipped  # worker_prep: no processor on this bare model
+    assert skipped == ["attn_mask", "vision_attn", "worker_prep", "video_prep"], skipped  # worker_prep: no processor on this bare model
     assert _implementations(model) == {"flash_attention_2"}
     os.environ["STARVLA_FAST"] = "all"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
                        "compile_lm", "compile_vision"], applied
-    assert skipped == ["worker_prep", "compile_world_model", "text_longest"] and _implementations(model) == {"sdpa"}, skipped
+    assert skipped == ["worker_prep", "video_prep", "compile_world_model", "text_longest"] and _implementations(model) == {"sdpa"}, skipped
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
     print(f"ok flash-attention: kept at the exact level, SDPA at the all level ({', '.join(applied)})")
@@ -751,6 +751,42 @@ def test_gemma4_sdpa():
           "training forwards without a cache give the same hidden states with shared keys and values")
 
 
+def test_minicpm_v_sdpa():
+    """MiniCPM-V 4.6 loaded with flash-attention: off flash-attention its vision attention runs one call per image
+    slice and per 2 x 2 window after reading the chunk lengths to the host in every layer, so the sdpa path switches
+    the language model only and the vision tower keeps flash-attention (and compile_vision does not apply to it).
+    Needs transformers 5."""
+    try:
+        from transformers import MiniCPMV4_6Config, MiniCPMV4_6ForConditionalGeneration
+    except ImportError:
+        print("skipped minicpm_v_sdpa: this transformers has no MiniCPM-V 4.6")
+        return
+    from starVLA.fast import attention, attention_implementation
+    from starVLA.fast import compile as regional
+
+    config = MiniCPMV4_6Config()
+    vision, text = config.vision_config, config.text_config
+    vision.hidden_size, vision.intermediate_size, vision.num_hidden_layers, vision.num_attention_heads = 32, 64, 2, 2
+    text.hidden_size, text.intermediate_size, text.num_hidden_layers, text.vocab_size = 64, 128, 4, 300
+    text.num_attention_heads, text.num_key_value_heads, text.head_dim = 4, 2, 16
+    text.linear_key_head_dim = text.linear_value_head_dim = 16
+    text.linear_num_key_heads = text.linear_num_value_heads = 2
+    text.layer_types = ["linear_attention"] * 3 + ["full_attention"]
+    model = MiniCPMV4_6ForConditionalGeneration._from_config(config, attn_implementation="sdpa")
+    for module in model.modules():
+        if hasattr(getattr(module, "config", None), "_attn_implementation"):
+            module.config._attn_implementation_internal = "flash_attention_2"  # cannot be loaded this way without a GPU
+    vlm = SimpleNamespace(model=model)
+    assert attention.use_sdpa(vlm)
+    assert attention_implementation(model.model.language_model) == "sdpa"
+    kinds = {(type(m).__name__, m.config._attn_implementation) for m in model.modules()
+             if type(m).__name__.endswith("Attention") and hasattr(m, "config")}
+    assert ("MiniCPMV4_6VisionAttention", "flash_attention_2") in kinds, kinds
+    assert ("MiniCPMV4_6VisionAttention", "sdpa") not in kinds, kinds
+    assert not regional.apply_vision(vlm)
+    print("ok minicpm_v sdpa: language model on SDPA, the per-chunk vision tower kept on flash-attention")
+
+
 def test_text_longest():
     """text_longest on Wan's interface: the upstream _encode_text (called unbound on a stand-in with a tiny random
     UMT5) and the fast one give the same tensor shape, zeros past every instruction, and the kept positions equal up
@@ -971,6 +1007,7 @@ if __name__ == "__main__":
         test_adamw_compiled()
         test_other_backbones()
         test_gemma4_sdpa()
+        test_minicpm_v_sdpa()
         test_text_longest()
         test_worker_prep()
         test_worker_prep_framework()

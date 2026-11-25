@@ -35,7 +35,8 @@ FAST_PATHS = {  # applied in this order
     "sdpa": FastPath(False, "backbone", "attention:use_sdpa",
                      "PyTorch SDPA attention where the config asks for flash-attention (or for eager attention only "
                      "because a sub-model has no SDPA: Gemma 4): the same attention from another kernel, and the "
-                     "one the fast paths below accelerate"),
+                     "one the fast paths below accelerate. A vision tower that would run one SDPA call per image or "
+                     "window and that vision_attn does not batch (MiniCPM-V 4.6) keeps flash-attention"),
     "attn_mask": FastPath(True, "backbone", "attn_mask:apply",
                           "causal + padding attention mask from two tensor ops instead of nested torch.vmap",
                           ("STARVLA_FAST_ATTN_MASK",)),
