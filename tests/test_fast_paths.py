@@ -9,6 +9,8 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import numpy as np
+
 import torch
 
 BACKBONE_PATHS = ("attn_mask", "hidden_only", "vision_attn", "vision_pos")
@@ -264,6 +266,121 @@ def _check_worker_prep(model_dir):
     assert "position_ids" not in fresh and worker_prep.stats["used"] == 9
     print(f"ok worker_prep {os.path.basename(model_dir)}: inputs built in workers are identical for "
           f"{', '.join(prompts)} ({', '.join(sorted(reference.keys()))} + position_ids)")
+
+
+class _PixelProcessor:
+    """A processor without files: token ids from the prompt's characters, pixels from the images (left padding)."""
+
+    def __call__(self, prompts, images):
+        from transformers import BatchFeature
+
+        width = max(len(p) for p in prompts)
+        ids = torch.tensor([[0] * (width - len(p)) + [ord(c) % 256 for c in p] for p in prompts])
+        mask = torch.tensor([[0] * (width - len(p)) + [1] * len(p) for p in prompts])
+        pixels = torch.stack([torch.stack([torch.as_tensor(np.asarray(im), dtype=torch.float32) for im in views])
+                              for views in images])
+        return BatchFeature(data={"input_ids": ids, "attention_mask": mask, "pixel_values": pixels})
+
+
+class _OwnBuilderFramework(torch.nn.Module):
+    """A framework that builds its backbone's inputs itself, as MiniCPM-RobotManip does."""
+
+    def __init__(self):
+        super().__init__()
+        self.processor = _PixelProcessor()
+        self.config = None
+        self.template = "The robot is a test arm. {instruction}"
+        self.model = torch.nn.Linear(2, 2)  # stands for the backbone + head
+        self.model.device = torch.device("cpu")
+
+    @staticmethod
+    def _strip(text):
+        return text.strip()
+
+    def _format_instruction(self, instruction):
+        return self.template.format(instruction=self._strip(instruction))
+
+    def _build_vlm_inputs(self, images, instructions):
+        return self.processor([self._format_instruction(i) for i in instructions], images).to(self.model.device)
+
+
+def test_worker_prep_framework():
+    """worker_prep_framework: a framework's own _build_vlm_inputs runs in the data-loader workers on a stand-in (its
+    processor, plain settings and methods); the framework gets identical inputs, and any other call is built by the
+    framework itself."""
+    from torch.utils.data import DataLoader
+
+    from starVLA import fast
+    from starVLA.fast import worker_prep
+
+    framework = _OwnBuilderFramework()
+    original = framework._build_vlm_inputs
+    os.environ["STARVLA_FAST"] = "worker_prep_framework"
+    applied, _ = fast._run("framework", framework)
+    assert applied == ["worker_prep_framework"], applied
+    cfg = SimpleNamespace(framework={"name": "MiniCPMRobotManip"})
+    collate = fast.worker_collate(cfg, _same_batch)
+    assert fast.worker_collate(cfg, collate) is collate  # wrapped once
+    loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=collate, multiprocessing_context="spawn")
+    used = worker_prep.stats["used"]
+    for batch in loader:
+        images, instructions = [e["image"] for e in batch], [e["lang"] for e in batch]
+        got, reference = framework._build_vlm_inputs(images, instructions), original(images, instructions)
+        assert got.keys() == reference.keys() and all(torch.equal(got[k], reference[k]) for k in reference.keys())
+    assert worker_prep.stats["used"] == used + 3, worker_prep.stats
+    other = framework._build_vlm_inputs(images, ["something else"] * 2)  # built by the framework itself
+    assert torch.equal(other["input_ids"], original(images, ["something else"] * 2)["input_ids"])
+    print("ok worker_prep_framework: a framework's own input construction in the workers, identical inputs")
+
+
+class _VideoBackbone(torch.nn.Module):
+    """The image encoding loop of starVLA's Wan interface, without the VAE."""
+
+    def __init__(self):
+        super().__init__()
+        from diffusers.video_processor import VideoProcessor
+
+        self.video_processor = VideoProcessor(vae_scale_factor=16)
+
+    def _encode_images_vae(self, images, num_frames=None):
+        height, width = 480, 832
+        preprocessed = []
+        for sample_imgs in images:
+            video_tensor = self.video_processor.preprocess_video(sample_imgs, height=height, width=width)
+            preprocessed.append(video_tensor)
+        return preprocessed
+
+
+def test_video_prep():
+    """video_prep: a world model's per-sample image preprocessing in the data-loader workers; the interface's loop
+    gets identical tensors for the batch's own images and computes any other call itself."""
+    try:
+        from diffusers.video_processor import VideoProcessor
+    except ImportError:
+        print("skipped video_prep: no diffusers")
+        return
+    from torch.utils.data import DataLoader
+
+    from starVLA import fast
+    from starVLA.fast import world_model
+
+    backbone = _VideoBackbone()
+    os.environ["STARVLA_FAST"] = "video_prep"
+    applied, _ = fast._run("backbone", backbone)
+    assert applied == ["video_prep"], applied
+    reference = VideoProcessor(vae_scale_factor=16)
+    collate = fast.worker_collate(SimpleNamespace(framework={"name": "WanGR00T"}), _same_batch)
+    loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=collate, multiprocessing_context="spawn")
+    used = world_model.video_stats["used"]
+    for batch in loader:
+        images = [e["image"] for e in batch]
+        for got, sample in zip(backbone._encode_images_vae(images), images):
+            assert torch.equal(got, reference.preprocess_video(sample, height=480, width=832))
+    assert world_model.video_stats["used"] == used + 6, world_model.video_stats
+    copies = [[im.copy() for im in sample] for sample in images]  # other image objects: computed here
+    assert all(torch.equal(a, b) for a, b in zip(backbone._encode_images_vae(copies), backbone._encode_images_vae(images)))
+    assert world_model.video_stats["used"] == used + 8
+    print("ok video_prep: a world model's image preprocessing in the workers, identical tensors")
 
 
 def _check_condition_once():
@@ -856,3 +973,5 @@ if __name__ == "__main__":
         test_gemma4_sdpa()
         test_text_longest()
         test_worker_prep()
+        test_worker_prep_framework()
+        test_video_prep()

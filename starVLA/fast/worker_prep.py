@@ -25,8 +25,10 @@ below. A missing or wrong registration costs the speedup, never correctness, and
 Workers also compute the multimodal rotary position ids (Qwen2.5-VL, Qwen3-VL), which the model otherwise derives
 at the start of every forward with a per-sample host loop.
 """
+import inspect
 import pickle
 import threading
+import types
 import weakref
 from functools import partial
 from types import SimpleNamespace
@@ -99,21 +101,43 @@ def _lang_force(cfg):
 # ---------------------------------------------------------------------------------------------- worker side
 
 
-class Builder:
-    """What a worker needs to make an interface's `build_qwenvl_inputs` call without the model. Pickled once in the
-    training process and unpickled in each worker, which gives every worker its own processor."""
+class _StandIn(SimpleNamespace):
+    """A framework without its model: its processor, config and plain settings (strings, numbers), and the methods of
+    its class bound to the stand-in (MiniCPM-RobotManip's `_format_instruction`)."""
 
-    def __init__(self, interface):
+    def __getattr__(self, name):
+        cls = self.__dict__.get("_class")
+        method = getattr(cls, name, None) if cls is not None and not name.startswith("__") else None
+        if isinstance(inspect.getattr_static(cls, name, None), (staticmethod, classmethod)):
+            return method
+        if callable(method):
+            return types.MethodType(method, self)
+        raise AttributeError(name)
+
+
+class Builder:
+    """What a worker needs to make an interface's `build_qwenvl_inputs` call (or a framework's own
+    `_build_vlm_inputs`) without the model. Pickled once in the training process and unpickled in each worker, which
+    gives every worker its own processor."""
+
+    def __init__(self, interface, method="build_qwenvl_inputs"):
         self.interface_class = type(interface)
+        self.method = method
+        self.rope = None
+        if method != "build_qwenvl_inputs":  # a framework's own builder
+            plain = {k: v for k, v in vars(interface).items()
+                     if not k.startswith("_") and isinstance(v, (str, int, float, bool))}
+            self.stand_in = _StandIn(_class=type(interface), processor=interface.processor, config=interface.config,
+                                     model=SimpleNamespace(device="cpu"), **plain)
+            return
         self.stand_in = SimpleNamespace(processor=interface.processor, config=interface.config,
                                         model=SimpleNamespace(device="cpu"))
         core = getattr(interface.model, "model", None)  # e.g. Qwen3VLModel inside Qwen3VLForConditionalGeneration
-        self.rope = None
         if callable(getattr(type(core), "get_rope_index", None)) and getattr(core, "config", None) is not None:
             self.rope = (type(core), core.config)
 
     def __call__(self, images, instructions):
-        inputs = self.interface_class.build_qwenvl_inputs(self.stand_in, images=images, instructions=instructions)
+        inputs = getattr(self.interface_class, self.method)(self.stand_in, images, instructions)
         if self.rope is not None and "position_ids" not in inputs and "pixel_values_videos" not in inputs:
             model_class, config = self.rope
             # get_rope_index reads only the model config and these inputs
@@ -233,14 +257,15 @@ def _same(a, b):
 
 
 def _probe(interface, builder):
-    """Does a worker's Builder return what the interface returns? Two samples of different prompt length, two views."""
+    """Does a worker's Builder return what the interface (or framework) returns? Two samples of different prompt
+    length, two views."""
     import numpy as np
     from PIL import Image
 
     rng = np.random.default_rng(0)
     images = [[Image.fromarray(rng.integers(0, 256, (224, 224, 3), dtype=np.uint8)) for _ in range(2)] for _ in range(2)]
     instructions = ["pick up the block", "open the top drawer and put the bowl inside"]
-    theirs = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    theirs = getattr(interface, builder.method)(images, instructions)
     ours = pickle.loads(pickle.dumps(builder))(images, instructions)
     if "position_ids" in ours and "position_ids" not in theirs:
         position_ids, _ = interface.model.model.get_rope_index(
@@ -254,14 +279,25 @@ def _probe(interface, builder):
 
 def apply(interface):
     """Backbone hook: check that workers can build this interface's inputs, and let it return what they built."""
+    return _install(interface, "build_qwenvl_inputs")
+
+
+def apply_framework(framework):
+    """Framework hook: the same for a framework that builds its backbone's inputs itself, with its own processor
+    (`_build_vlm_inputs(images, instructions)`: MiniCPM-RobotManip). The workers run the framework's method on a
+    stand-in without the model; the same probe decides."""
+    return _install(framework, "_build_vlm_inputs")
+
+
+def _install(interface, method):
     global _builder
-    original = getattr(interface, "build_qwenvl_inputs", None)
+    original = getattr(interface, method, None)
     if not callable(original) or getattr(interface, "processor", None) is None or not hasattr(interface, "model"):
         return False
     if getattr(original, "_starvla_worker_prep", False):
         return True
     try:
-        builder = Builder(interface)
+        builder = Builder(interface, method)
         try:
             works = _probe(interface, builder)
         except Exception:
@@ -276,22 +312,24 @@ def apply(interface):
               flush=True)
         return False
 
-    def build_qwenvl_inputs(images, instructions, solutions=None, **kwargs):
+    def build_inputs(images, instructions, solutions=None, **kwargs):
         prepared = _take(images, instructions) if solutions is None and not kwargs else None
         if prepared is None:
-            return original(images, instructions, solutions=solutions, **kwargs)
+            if solutions is not None:
+                kwargs["solutions"] = solutions
+            return original(images, instructions, **kwargs)
         device = interface.model.device
         return type(prepared)(data={key: value.to(device) for key, value in prepared.items()})  # a new one per call
 
-    build_qwenvl_inputs._starvla_worker_prep = True
-    interface.build_qwenvl_inputs = build_qwenvl_inputs
+    build_inputs._starvla_worker_prep = True
+    setattr(interface, method, build_inputs)
     _builder = builder
     return True
 
 
 def collate(cfg, collate_fn):
     """Data hook: the collate function for the workers; `collate_fn` itself when no interface was set up."""
-    if _builder is None:
+    if _builder is None or isinstance(collate_fn, Collate):  # nothing to build, or wrapped already
         return collate_fn
     factory = _PROMPTS.get(str(cfg.framework.get("name", "")))
     return Collate(collate_fn, _builder, factory(cfg) if factory is not None else _lang)

@@ -52,6 +52,12 @@ FAST_PATHS = {  # applied in this order
     "worker_prep": FastPath(True, "backbone", "worker_prep:apply",
                             "the interface's input construction (VLM processor) in the data-loader workers",
                             ("STARVLA_PREP_IN_WORKERS",), "worker_prep:collate"),
+    "video_prep": FastPath(True, "backbone", "world_model:video_prep",
+                           "a world-model backbone's image resize and normalization (Wan, Cosmos-Predict2) in the "
+                           "data-loader workers", (), "world_model:video_collate"),
+    "worker_prep_framework": FastPath(True, "framework", "worker_prep:apply_framework",
+                                      "a framework's own backbone-input construction (MiniCPM-RobotManip's processor "
+                                      "call) in the data-loader workers", (), "worker_prep:collate"),
     "worker_examples": FastPath(True, "framework", "openpi:worker_examples",
                                 "PI0 / PI05: the framework's sample preparation (image resize and padding, state "
                                 "and action padding) in the data-loader workers", (), "openpi:collate"),
