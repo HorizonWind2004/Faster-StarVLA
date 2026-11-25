@@ -30,6 +30,8 @@ ap.add_argument('--host-profile', type=int, default=0,
 ap.add_argument('--stages', type=int, default=0,
                 help='time forward, backward and optimizer step separately over this many steps (synchronized at the edges)')
 ap.add_argument('--cache-dir', help='keep the compiler caches (Inductor, Triton) here across runs, to time a warm start')
+ap.add_argument('--env', nargs='*', default=[], help='NAME=VALUE for the training processes (the bench passes only its own '
+                                                       'environment otherwise), e.g. TORCH_LOGS=recompiles')
 ap.add_argument('--python', help='train with this interpreter instead of the judge\'s (a backbone that needs transformers 5)')
 a = ap.parse_args()
 a.out = a.out if a.out.startswith('/') else str(WS / a.out)  # the training process runs in the tree
@@ -69,6 +71,7 @@ with bench.GpuLock():
     if a.cache_dir:
         cache = Path(a.cache_dir).resolve()
         extra_env.update(TORCHINDUCTOR_CACHE_DIR=str(cache / 'inductor'), TRITON_CACHE_DIR=str(cache / 'triton'))
+    extra_env.update(item.split('=', 1) for item in a.env)
     res = bench.timing_run(a.tree if a.tree.startswith('/') else str(WS / a.tree), switches, a.out, a.tag,
                            cprofile=a.cprofile or a.host_profile, stages=a.stages, extra_env=extra_env)
 res['train_overrides'] = a.set

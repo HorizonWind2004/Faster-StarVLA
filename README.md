@@ -32,7 +32,7 @@ These figures are from the session in which the baseline timing was frozen. In t
 
 - **Exact or equivalent, your choice.** `exact`: 1.74×, with 23,336 recorded tensors bitwise identical to
   upstream. `all`: 2.00×, every training endpoint within 3σ of upstream's own seed-to-seed spread.
-- **Not just one recipe.** 14 framework × backbone recipes measured, each against its own baseline: `all`
+- **Not just one recipe.** 17 framework × backbone recipes measured, each against its own baseline: `all`
   gives 1.33× to 3.20×, `max` up to 4.43× (QwenDiscreteDiffusion on Qwen3-VL-4B).
 - **Trains a working policy.** 30,000 steps with all fast paths on 2 GPUs reach a LIBERO average of 97.3% (the
   released 8-GPU checkpoint, evaluated the same way: 98.65%).
@@ -166,7 +166,7 @@ See [why each change helps and what each one measured](docs/faster/measurement.m
 
 starVLA is a framework of many policies and backbones. The headline numbers are from one recipe (QwenOFT on
 Qwen3-VL-4B). The same setting on the other frameworks, same hardware, data and batch size, each row against the
-baseline of the same job (14 recipes, 11 frameworks, 4 backbones):
+baseline of the same job (17 recipes, 12 frameworks, 6 backbones):
 
 <p align="center">
   <picture>
@@ -190,6 +190,9 @@ baseline of the same job (14 recipes, 11 frameworks, 4 backbones):
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
+| QwenGR00T | Qwen3.5-0.8B | flash-attention | 599.9 | 443.7 (1.35×) | 407.3 (1.47×) | 406.7 (1.48×) | — |
+| QwenOFT | Qwen3.5-0.8B | flash-attention | 521.9 | 361.0 (1.45×) | 326.3 (1.60×) | 321.5 (1.62×) | — |
+| Gemma4PI | Gemma-4-E2B (batch 4) | eager | 1080.1 | 965.0 (1.12×) | 594.3 (1.82×) | 581.3 (1.86×) | — |
 | WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)).
@@ -204,11 +207,15 @@ On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the
 
 PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_compile`; `max` adds `openpi_sdpa`. The whole model already runs in bf16, so TF32 changes nothing there.
 
-New backbones (session 13, still running): Wan2.2-TI2V-5B and Qwen3.5-0.8B are in the table above; on the real Qwen3.5-0.8B
-the `exact` paths leave loss and gradients bitwise identical. Gemma 4, MiniCPM-V (inside MiniCPM-RobotManip) and Florence-2
-are written and CPU-tested, their GPU checks are queued. MiniCPM-RobotManip trains on 10-D end-effector data that is not
-here, and starVLA's Florence-2 interface takes one camera view where the LIBERO recipe gives two: those two get distance
-checks only. `text_longest` (Wan) is for evaluation and inference. Qwen3.5 and
+New backbones (session 13): Wan2.2-TI2V-5B, Qwen3.5-0.8B and Gemma-4-E2B are in the table above. On the real
+Qwen3.5-0.8B the `exact` paths leave loss and gradients bitwise identical. Two of the paths were fixed for them on the
+way: `compile_lm` leaves a language model with linear-attention layers (Qwen3.5) alone, since compiling it made the
+first step take 15 minutes and the step slower; and a batch without padding gets the same causal mask as any other
+batch, so compiled layers are not compiled again in the middle of training (Gemma 4 at batch 4 hit one at step 161).
+Gemma 4 runs at batch 4 because its eager baseline does not fit 16. MiniCPM-V (inside MiniCPM-RobotManip) and Florence-2
+get distance checks only: MiniCPM-RobotManip trains on 10-D end-effector data that is not here, and starVLA's
+Florence-2 interface takes one camera view where the LIBERO recipe gives two (upstream's step fails on it, so its
+distance is on the backbone's loss). `text_longest` (Wan) is for evaluation and inference. Qwen3.5 and
 Gemma 4 need transformers 5; upstream pins 4.57. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
 interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface, which `worker_prep` leaves to the training
 process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only frameworks; and the co-training and VLM trainers

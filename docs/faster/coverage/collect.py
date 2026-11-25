@@ -30,6 +30,9 @@ SESSIONS = {
     "72879": {"session": 10, "node": None, "when": "24 Nov", "note": "statistical gate on QwenPI; judge on the released commit"},
     "73275": {"session": 13, "node": None, "when": "25 Nov, morning", "note": "the new backbones: Qwen3.5, Wan (and the distances of Gemma 4, MiniCPM, Florence-2)"},
     "73276": {"session": 13, "node": None, "when": "25 Nov", "note": "session 13 continued: Gemma 4 (eager), MiniCPM-RobotManip, Florence-2, Qwen3.5 + GR00T"},
+    "73509": {"session": 13, "node": None, "when": "25 Nov, evening", "note": "session 13 continued: Gemma 4 at batch 4, Qwen3.5 (ref / exact)"},
+    "73564": {"session": 13, "node": None, "when": "25 Nov, evening", "note": "Qwen3.5 all / max: compile_lm leaves linear-attention models alone"},
+    "73603": {"session": 13, "node": None, "when": "25 Nov, night", "note": "Gemma 4 all / max: the causal mask is built for unpadded batches too"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
 }
 OTHERS = WS / "runs/others"  # session 4
@@ -46,7 +49,7 @@ COMBO_INFO = {  # run directory -> framework, backbone, attention the config ask
     "pi0": ("PI0", "PaliGemma (openpi)", "eager"), "pi05": ("PI05", "PaliGemma (openpi)", "eager"),
     # session 13, transformers 5 for Qwen3.5 and Gemma 4 (the attention each recipe ends up with)
     "q35_gr00t": ("QwenGR00T", "Qwen3.5-0.8B", FA2), "q35_oft": ("QwenOFT", "Qwen3.5-0.8B", FA2),
-    "gemma4_pi": ("Gemma4PI", "Gemma-4-E2B", "eager"), "wan_gr00t": ("WanGR00T", "Wan2.2-TI2V-5B (world model)", SDPA),
+    "gemma4_pi_b": ("Gemma4PI", "Gemma-4-E2B (batch 4)", "eager"), "wan_gr00t": ("WanGR00T", "Wan2.2-TI2V-5B (world model)", SDPA),
 }
 
 
@@ -246,7 +249,8 @@ for session, folder in ((6, "bitwise"), (7, "distance"), (8, "distance"), (10, "
                               "loaded_with": d["loaded_with"], "paths": d.get("paths", "sdpa"), "applied": d["applied"],
                               "noise_floor_gradient_relative_difference": noise["gradient_relative_difference"],
                               **{k: fast[k] for k in ("loss", "loss_relative_difference", "gradient_relative_difference",
-                                                      "gradient_cosine")}, "by_module": fast.get("by_module")})
+                                                      "gradient_cosine")}, "by_module": fast.get("by_module"),
+                              "loss_kind": d.get("loss") if isinstance(d.get("loss"), str) else "action"})
 
 bitwise = []
 suite = R / "bitwise4" if list((R / "bitwise4").glob("*.json")) else R / "bitwise3"

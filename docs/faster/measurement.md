@@ -224,6 +224,9 @@ the same job:
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ | 12 | 70.6 / 70.6 / 59.2 |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — | 12 | 102.5 / 102.5 / 63.0 |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — | 12 | 113.2 / 113.2 / 70.0 |
+| QwenGR00T | Qwen3.5-0.8B | flash-attention | 599.9 | 443.7 (1.35×) | 407.3 (1.47×) | 406.7 (1.48×) | — | 13 | 28.2 / 27.9 / 25.8 |
+| QwenOFT | Qwen3.5-0.8B | flash-attention | 521.9 | 361.0 (1.45×) | 326.3 (1.60×) | 321.5 (1.62×) | — | 13 | 21.7 / 21.2 / 20.9 |
+| Gemma4PI | Gemma-4-E2B (batch 4) | eager | 1080.1 | 965.0 (1.12×) | 594.3 (1.82×) | 581.3 (1.86×) | — | 13 | 164.3 / 164.3 / 82.0 |
 | WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — | 13 | 155.2 / 155.2 / 139.1 |
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
@@ -270,6 +273,9 @@ by chance as well; `exact` is bitwise identical to the baseline and shows how mu
 | QwenGR00T | Qwen2.5-VL-3B | 12 | 0.8021 ± 0.017 | 0.808 ± 0.018 | 0.8046 ± 0.018 | 0.8041 ± 0.017 |
 | PI0 | PaliGemma (openpi) | 12 | 0.008892 ± 0.00043 | 0.008892 ± 0.00043 | 0.00889 ± 0.00043 | 0.008895 ± 0.00043 |
 | PI05 | PaliGemma (openpi) | 12 | 0.07843 ± 0.0012 | 0.07843 ± 0.0012 | 0.07841 ± 0.0012 | 0.07841 ± 0.0012 |
+| QwenGR00T | Qwen3.5-0.8B | 13 | 0.7574 ± 0.016 | 0.751 ± 0.016 | 0.733 ± 0.016 | 0.7546 ± 0.017 |
+| QwenOFT | Qwen3.5-0.8B | 13 | 0.256 ± 0.0019 | 0.2575 ± 0.0019 | 0.2546 ± 0.0019 | 0.2564 ± 0.0019 |
+| Gemma4PI | Gemma-4-E2B (batch 4) | 13 | 0.9892 ± 0.019 | 0.9961 ± 0.018 | 0.9801 ± 0.019 | 1.008 ± 0.018 |
 | WanGR00T | Wan2.2-TI2V-5B (world model) | 13 | 0.7208 ± 0.017 | 0.7066 ± 0.016 | 0.7047 ± 0.016 | 0.706 ± 0.016 |
 
 ### Where the time goes, and the paths added after it (session 11)
@@ -346,7 +352,9 @@ the default code agree exactly (the noise floor is zero), so every number below 
 | `compile_vision` | QwenGR00T | Qwen2.5-VL-3B / SDPA | 7.7e-05 | 1.3 | 0.370 | 2.0 (cos -0.044) | 0.16 (cos 0.986) | 0.052 (cos 0.999) |
 | `compile_vision` | QwenOFT | Qwen2.5-VL-3B / SDPA | 1.3e-03 | 0.046 | 0.999 | 0.56 (cos 0.841) | 0.048 (cos 0.999) | 0.032 (cos 1.000) |
 | (for comparison) SDPA → eager attention | QwenGR00T | Qwen2.5-VL-3B / SDPA | 1.4e-04 | 4.3 | 0.076 | 6.6 (cos -0.088) | 0.23 (cos 0.975) | 0.083 (cos 0.997) |
+| (for comparison) SDPA → eager attention | QwenGR00T | Qwen3.5-0.8B / SDPA | 6.0e-05 | 1.0 | 0.570 | 1.5 (cos 0.203) | 0.17 (cos 0.986) | 0.078 (cos 0.997) |
 | (for comparison) SDPA → eager attention | QwenOFT | Qwen2.5-VL-3B / SDPA | 4.5e-04 | 0.11 | 0.995 | 0.92 (cos 0.554) | 0.1 (cos 0.996) | 0.072 (cos 0.997) |
+| `sdpa` (eager → SDPA) | Gemma4PI | gemma-4-E2B-it / eager | 8.6e-04 | 0.53 | 0.973 | 1.4 (cos 0.434) | 0.53 (cos 0.977) | 0.048 (cos 0.999) |
 | `sdpa` (flash-attention → SDPA) | QwenGR00T | Qwen2.5-VL-3B / flash-attention | 5.4e-05 | 0.87 | 0.531 | 1.0 (cos 0.242) | 0.15 (cos 0.988) | 0.041 (cos 0.999) |
 | `sdpa` (flash-attention → SDPA) | QwenOFT | Qwen2.5-VL-3B / flash-attention | 1.7e-03 | 0.079 | 0.997 | 1.3 (cos 0.287) | 0.051 (cos 0.999) | 0.046 (cos 0.999) |
 | `vision_attn_relaxed` | QwenGR00T | Qwen2.5-VL-3B / SDPA | 0.0e+00 | 0 | 1.000 | 0 (cos 1.000) | 0 (cos 1.000) | 0 (cos 1.000) |
@@ -359,16 +367,25 @@ the default code agree exactly (the noise floor is zero), so every number below 
 | `openpi_compile` | PI05 | PaliGemma (openpi) / eager | 1.2e-03 | 0.068 | 0.998 | 0.13 (cos 0.992) | 0.059 (cos 0.998) | 0.049 (cos 0.999) |
 | `openpi_sdpa` | PI0 | PaliGemma (openpi) / eager | 1.1e-04 | 0.072 | 0.997 | 0.12 (cos 0.993) | 0.053 (cos 0.999) | 0.022 (cos 1.000) |
 | `openpi_sdpa` | PI05 | PaliGemma (openpi) / eager | 2.3e-04 | 0.059 | 0.998 | 0.14 (cos 0.990) | 0.041 (cos 0.999) | 0.034 (cos 1.000) |
+| `sdpa,compile_lm,compile_vision` | Gemma4PI | gemma-4-E2B-it / eager | 1.3e-03 | 0.3 | 0.979 | 1.0 (cos 0.538) | 0.3 (cos 0.980) | 0.053 (cos 0.999) |
+| `condition_once,compile_head` | Gemma4PI | gemma-4-E2B-it / eager | 1.2e-07 | 0.011 | 1.000 | 0.028 (cos 1.000) | 0.011 (cos 1.000) | 7.6e-07 (cos 1.000) |
+| `compile_lm,compile_vision` | MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint) / eager | 2.8e-04 | 0.0079 | 1.000 | 0.013 (cos 1.000) | 0.0078 (cos 1.000) | 0.004 (cos 1.000) |
+| `hidden_only,vision_pos` | MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint) / eager | 0.0e+00 | 0 | 1.000 | 0 (cos 1.000) | 0 (cos 1.000) | 0 (cos 1.000) |
 | `openpi_one_pass` | PI0 | PaliGemma (openpi) / eager | 0.0e+00 | 0.0015 | 1.000 | 0.0028 (cos 1.000) | 0.00083 (cos 1.000) | 0 (cos 1.000) |
 | `openpi_one_pass` | PI05 | PaliGemma (openpi) / eager | 0.0e+00 | 0.00099 | 1.000 | 0.0028 (cos 1.000) | 0.00049 (cos 1.000) | 0 (cos 1.000) |
 | `compile_head` | QwenAdapter | Qwen3-VL-4B / SDPA | 7.0e-04 | 0.091 | 0.997 | 0.13 (cos 0.998) | 0.061 (cos 0.998) | 0.016 (cos 1.000) |
 | `compile_head` | QwenDiscreteDiffusion | Qwen3-VL-4B / SDPA | 1.9e-06 | 0.066 | 0.998 | 0.042 (cos 0.999) | 0.065 (cos 0.998) | 0.073 (cos 0.997) |
 | `compile_head` | QwenGR00T | Qwen3-VL-4B / SDPA | 1.8e-07 | 0.018 | 1.000 | 0.026 (cos 1.000) | 0.0092 (cos 1.000) | 0.0039 (cos 1.000) |
+| `compile_lm,compile_vision` | QwenGR00T (backbone loss) | Florence-2-large / eager | 1.9e-02 | 0.73 | 0.770 | 1.1 (cos 0.554) | 0.09 (cos 0.996) | — |
 | `compile_lm,compile_vision` | QwenGR00T | Qwen3.5-0.8B / SDPA | 1.0e-04 | 0.83 | 0.634 | 1.0 (cos 0.411) | 0.2 (cos 0.981) | 0.099 (cos 0.995) |
 | `hidden_only,vision_attn,vision_pos` | QwenGR00T | Qwen3.5-0.8B / SDPA | 0.0e+00 | 0 | 1.000 | 0 (cos 1.000) | 0 (cos 1.000) | 0 (cos 1.000) |
 | `compile_head` | QwenPI | Qwen3-VL-4B / SDPA | 4.7e-06 | 0.034 | 0.999 | 0.031 (cos 1.000) | 0.032 (cos 1.000) | 0.034 (cos 0.999) |
 | `compile_world_model` | WanGR00T | Wan2.2-TI2V-5B-Diffusers / SDPA | 1.0e-06 | 0.018 | 1.000 | — | 0.035 (cos 0.999) | 0.014 (cos 1.000) |
 | `condition_once,compile_head` | WanGR00T | Wan2.2-TI2V-5B-Diffusers / SDPA | 0.0e+00 | 0.0013 | 1.000 | — | 0.003 (cos 1.000) | 0.00075 (cos 1.000) |
+
+Qwen3.5's `compile_lm` row was measured before `compile_lm` stopped applying to language models with linear-attention layers; at the `all` level only its vision tower is compiled now.
+
+(backbone loss): upstream's training step of that recipe fails, so the step is the backbone's language-model loss and no action head is measured.
 
 - **One bf16 training step is far more sensitive to rounding than the loss is.** Compiling the decoder layers, which the judge accepts on the headline recipe, moves the language model's gradient by 28% (QwenOFT) and 22% (QwenGR00T), and the loss of that step by 1% and 0.0007%.
 - **The vision tower's one-step gradient is mostly rounding noise.** It is what remains after backpropagation through the whole language model and 32 vision layers in bf16. Compiling the vision blocks leaves it with cosine 0.84 (QwenOFT) and -0.04 (QwenGR00T) to the default one; switching the same backbone from SDPA to eager attention, a change that is not ours and computes the same function, gives 0.55 and -0.09.

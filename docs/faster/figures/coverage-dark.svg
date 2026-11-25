@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="756" viewBox="0 0 960 756" role="img" aria-label="Speedup per framework and backbone">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="906" viewBox="0 0 960 906" role="img" aria-label="Speedup per framework and backbone">
 <title>Speedup per framework and backbone</title>
 <style>text{font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;} .m{font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;}</style>
-<rect x="0.0" y="0.0" width="960.0" height="756.0" fill="#0d1117"/>
-<rect x="0.5" y="0.5" width="959.0" height="755.0" fill="#151b23" rx="14" stroke="#30363d" stroke-width="1"/>
+<rect x="0.0" y="0.0" width="960.0" height="906.0" fill="#0d1117"/>
+<rect x="0.5" y="0.5" width="959.0" height="905.0" fill="#151b23" rx="14" stroke="#30363d" stroke-width="1"/>
 <text x="32.0" y="46.0" font-size="24" fill="#f0f6fc" font-weight="700">One setting, every recipe</text>
-<text x="32.0" y="70.0" font-size="13" fill="#9198a1">Training-step speedup on 14 framework × backbone recipes, each against a baseline timed in the same job (2 × B300)</text>
+<text x="32.0" y="70.0" font-size="13" fill="#9198a1">Training-step speedup on 17 framework × backbone recipes, each against a baseline timed in the same job (2 × B300)</text>
 <circle cx="38.0" cy="104.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
 <text x="50.0" y="109.0" font-size="13"><tspan fill="#f0f6fc" font-weight="600" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">exact</tspan><tspan fill="#9198a1">  bitwise identical</tspan></text>
 <rect x="233.8" y="98.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
@@ -14,23 +14,23 @@
 <text x="770.0" y="134.0" font-size="12.5" fill="#9198a1" font-weight="600" text-anchor="end" class="m">exact</text>
 <text x="840.0" y="134.0" font-size="12.5" fill="#9198a1" font-weight="600" text-anchor="end" class="m">all</text>
 <text x="910.0" y="134.0" font-size="12.5" fill="#9198a1" font-weight="600" text-anchor="end" class="m">max</text>
-<line x1="300.0" y1="142.0" x2="300.0" y2="706.0" stroke="#3d444d" stroke-width="1.5" stroke-linecap="butt"/>
-<text x="300.0" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">1×</text>
-<line x1="357.1" y1="142.0" x2="357.1" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="357.1" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">1.5×</text>
-<line x1="414.3" y1="142.0" x2="414.3" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="414.3" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">2×</text>
-<line x1="471.4" y1="142.0" x2="471.4" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="471.4" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">2.5×</text>
-<line x1="528.6" y1="142.0" x2="528.6" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="528.6" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">3×</text>
-<line x1="585.7" y1="142.0" x2="585.7" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="585.7" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">3.5×</text>
-<line x1="642.9" y1="142.0" x2="642.9" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="642.9" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">4×</text>
-<line x1="700.0" y1="142.0" x2="700.0" y2="706.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="700.0" y="724.0" font-size="12" fill="#7d8590" text-anchor="middle">4.5×</text>
-<text x="304.0" y="742.0" font-size="11.5" fill="#7d8590">1× = that row's own baseline</text>
+<line x1="300.0" y1="142.0" x2="300.0" y2="856.0" stroke="#3d444d" stroke-width="1.5" stroke-linecap="butt"/>
+<text x="300.0" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">1×</text>
+<line x1="357.1" y1="142.0" x2="357.1" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="357.1" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">1.5×</text>
+<line x1="414.3" y1="142.0" x2="414.3" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="414.3" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">2×</text>
+<line x1="471.4" y1="142.0" x2="471.4" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="471.4" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">2.5×</text>
+<line x1="528.6" y1="142.0" x2="528.6" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="528.6" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">3×</text>
+<line x1="585.7" y1="142.0" x2="585.7" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="585.7" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">3.5×</text>
+<line x1="642.9" y1="142.0" x2="642.9" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="642.9" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">4×</text>
+<line x1="700.0" y1="142.0" x2="700.0" y2="856.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="700.0" y="874.0" font-size="12" fill="#7d8590" text-anchor="middle">4.5×</text>
+<text x="304.0" y="892.0" font-size="11.5" fill="#7d8590">1× = that row's own baseline</text>
 <text x="32.0" y="169.0" font-size="13.5" fill="#f0f6fc" font-weight="700">Qwen3-VL-4B</text>
 <line x1="32.0" y1="176.0" x2="928.0" y2="176.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
 <text x="46.0" y="200.0" font-size="13"><tspan fill="#f0f6fc" font-weight="600">QwenOFT</tspan><tspan fill="#7d8590" font-size="11.5">  SDPA</tspan></text>
@@ -139,14 +139,42 @@
 <text x="770.0" y="619.5" font-size="13" fill="#9198a1" text-anchor="end">1.07×</text>
 <text x="840.0" y="619.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">2.17×</text>
 <text x="910.0" y="619.5" font-size="13" fill="#9198a1" text-anchor="end">2.12×</text>
-<text x="32.0" y="649.0" font-size="13.5" fill="#f0f6fc" font-weight="700">Wan2.2-TI2V-5B (world model)</text>
+<text x="32.0" y="649.0" font-size="13.5" fill="#f0f6fc" font-weight="700">Qwen3.5-0.8B</text>
 <line x1="32.0" y1="656.0" x2="928.0" y2="656.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
-<text x="46.0" y="680.0" font-size="13"><tspan fill="#f0f6fc">WanGR00T</tspan><tspan fill="#7d8590" font-size="11.5">  SDPA</tspan></text>
-<line x1="300.0" y1="675.0" x2="348.5" y2="675.0" stroke="#3d444d" stroke-width="2" stroke-linecap="round"/>
-<rect x="343.3" y="669.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
-<path d="M344.8,668.5 L351.3,675.0 L344.8,681.5 L338.3,675.0 Z" fill="#199e70" stroke="#151b23" stroke-width="2" stroke-linejoin="round"/>
-<circle cx="299.6" cy="675.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
-<text x="770.0" y="679.5" font-size="13" fill="#9198a1" text-anchor="end">1.00×</text>
-<text x="840.0" y="679.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">1.42×</text>
-<text x="910.0" y="679.5" font-size="13" fill="#9198a1" text-anchor="end">1.39×</text>
+<text x="46.0" y="680.0" font-size="13"><tspan fill="#f0f6fc">QwenGR00T</tspan><tspan fill="#7d8590" font-size="11.5">  flash-attn</tspan></text>
+<line x1="300.0" y1="675.0" x2="354.3" y2="675.0" stroke="#3d444d" stroke-width="2" stroke-linecap="round"/>
+<path d="M354.3,668.5 L360.8,675.0 L354.3,681.5 L347.8,675.0 Z" fill="#199e70" stroke="#151b23" stroke-width="2" stroke-linejoin="round"/>
+<rect x="348.9" y="669.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
+<circle cx="340.2" cy="675.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
+<text x="770.0" y="679.5" font-size="13" fill="#9198a1" text-anchor="end">1.35×</text>
+<text x="840.0" y="679.5" font-size="13" fill="#9198a1" text-anchor="end">1.47×</text>
+<text x="910.0" y="679.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">1.48×</text>
+<text x="46.0" y="710.0" font-size="13"><tspan fill="#f0f6fc">QwenOFT</tspan><tspan fill="#7d8590" font-size="11.5">  flash-attn</tspan></text>
+<line x1="300.0" y1="705.0" x2="371.3" y2="705.0" stroke="#3d444d" stroke-width="2" stroke-linecap="round"/>
+<path d="M371.3,698.5 L377.8,705.0 L371.3,711.5 L364.8,705.0 Z" fill="#199e70" stroke="#151b23" stroke-width="2" stroke-linejoin="round"/>
+<rect x="363.3" y="699.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
+<circle cx="351.0" cy="705.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
+<text x="770.0" y="709.5" font-size="13" fill="#9198a1" text-anchor="end">1.45×</text>
+<text x="840.0" y="709.5" font-size="13" fill="#9198a1" text-anchor="end">1.60×</text>
+<text x="910.0" y="709.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">1.62×</text>
+<text x="32.0" y="739.0" font-size="13.5" fill="#f0f6fc" font-weight="700">Gemma-4-E2B (batch 4)</text>
+<line x1="32.0" y1="746.0" x2="928.0" y2="746.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="46.0" y="770.0" font-size="13"><tspan fill="#f0f6fc">Gemma4PI</tspan><tspan fill="#7d8590" font-size="11.5">  eager</tspan></text>
+<line x1="300.0" y1="765.0" x2="398.1" y2="765.0" stroke="#3d444d" stroke-width="2" stroke-linecap="round"/>
+<path d="M398.1,758.5 L404.6,765.0 L398.1,771.5 L391.6,765.0 Z" fill="#199e70" stroke="#151b23" stroke-width="2" stroke-linejoin="round"/>
+<rect x="388.2" y="759.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
+<circle cx="313.6" cy="765.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
+<text x="770.0" y="769.5" font-size="13" fill="#9198a1" text-anchor="end">1.12×</text>
+<text x="840.0" y="769.5" font-size="13" fill="#9198a1" text-anchor="end">1.82×</text>
+<text x="910.0" y="769.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">1.86×</text>
+<text x="32.0" y="799.0" font-size="13.5" fill="#f0f6fc" font-weight="700">Wan2.2-TI2V-5B (world model)</text>
+<line x1="32.0" y1="806.0" x2="928.0" y2="806.0" stroke="#262c36" stroke-width="1" stroke-linecap="butt"/>
+<text x="46.0" y="830.0" font-size="13"><tspan fill="#f0f6fc">WanGR00T</tspan><tspan fill="#7d8590" font-size="11.5">  SDPA</tspan></text>
+<line x1="300.0" y1="825.0" x2="348.5" y2="825.0" stroke="#3d444d" stroke-width="2" stroke-linecap="round"/>
+<rect x="343.3" y="819.8" width="10.4" height="10.4" rx="1.5" fill="#d95926" stroke="#151b23" stroke-width="2"/>
+<path d="M344.8,818.5 L351.3,825.0 L344.8,831.5 L338.3,825.0 Z" fill="#199e70" stroke="#151b23" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="299.6" cy="825.0" r="5.5" fill="#3987e5" stroke="#151b23" stroke-width="2"/>
+<text x="770.0" y="829.5" font-size="13" fill="#9198a1" text-anchor="end">1.00×</text>
+<text x="840.0" y="829.5" font-size="13" fill="#f0f6fc" font-weight="600" text-anchor="end">1.42×</text>
+<text x="910.0" y="829.5" font-size="13" fill="#9198a1" text-anchor="end">1.39×</text>
 </svg>
