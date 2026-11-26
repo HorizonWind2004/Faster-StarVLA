@@ -17,14 +17,16 @@ Optimizer checkpoints are not interchangeable between runs with and without this
 
 A sub-model is frozen only when (checked on the interface's source) every call into it is inside a
 `with torch.no_grad():` block, the framework's own code does not touch it, and the configured learning rates and
-weight decay keep the decay below fp32 rounding.
+weight decay keep the decay below fp32 rounding. The framework's own sub-models are checked the same way on its
+source: ABot-M0 runs its VGGT-1B spatial model's aggregator under no_grad only and leaves it trainable too.
 """
 import ast
 import inspect
 import textwrap
 
-_SUB_MODELS = ("text_encoder", "vae")
-_NEUTRAL_CALLS = {"parameters", "named_parameters", "buffers", "modules", "to", "eval", "train", "requires_grad_"}
+import torch
+
+_NEUTRAL = {"parameters", "named_parameters", "buffers", "modules", "to", "eval", "train", "requires_grad_"}
 _DECAY_BOUND = 2.0 ** -25
 
 
@@ -46,8 +48,6 @@ def _no_grad(item):
 
 def _sources(cls):
     """The source of the class and of its bases up to torch.nn.Module (the methods it inherits); None if unreadable."""
-    import torch
-
     out = []
     for base in cls.__mro__:
         if base in (object, torch.nn.Module) or base.__module__.startswith("torch."):
@@ -60,7 +60,10 @@ def _sources(cls):
 
 
 def _calls_under_no_grad(cls, name):
-    """Every call into self.<name> in the class's source is inside a no_grad block (and there is at least one)."""
+    """Every call into self.<name> (self.<name>(...), self.<name>.encode(...)) and every alias of it (x = self.<name>)
+    in the class's source is inside a no_grad block, and there is at least one call. Reading its attributes, the
+    module bookkeeping calls (parameters, to, eval, ...) and handing it to another object (Wan's generate builds a
+    WanPipeline) do not count; what this misses the runtime guard in apply() reports."""
     sources = _sources(cls)
     try:
         trees = [ast.parse(source) for source in sources or ()]
@@ -68,21 +71,38 @@ def _calls_under_no_grad(cls, name):
         return False
     if not trees:
         return False
-    found = []
+    calls, aliases = [], []
+
+    def is_self_attr(node):
+        return isinstance(node, ast.Attribute) and node.attr == name and isinstance(node.value, ast.Name) and \
+            node.value.id == "self"
 
     def visit(node, guarded):
         if isinstance(node, (ast.With, ast.AsyncWith)) and any(_no_grad(item) for item in node.items):
             guarded = True
         if isinstance(node, ast.Call):
             chain = _chain(node.func)
-            if chain and chain[:2] == ["self", name] and not (len(chain) == 3 and chain[2] in _NEUTRAL_CALLS):
-                found.append(guarded)
+            if chain and chain[:2] == ["self", name] and not (len(chain) == 3 and chain[2] in _NEUTRAL):
+                calls.append(guarded)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and is_self_attr(node.value):
+            aliases.append(guarded)
         for child in ast.iter_child_nodes(node):
             visit(child, guarded)
 
     for tree in trees:
         visit(tree, False)
-    return bool(found) and all(found)
+    return bool(calls) and all(calls) and all(aliases)
+
+
+def _guard(name, module):
+    """Fail loudly if a frozen sub-model is ever run with gradients enabled in training: upstream would train it."""
+    def check(*_):
+        if torch.is_grad_enabled() and module.training:
+            raise RuntimeError(f"[starVLA.fast] frozen_no_grad froze {name}, which runs here with gradients enabled "
+                               f"(upstream trains it); run with STARVLA_FAST=all,-frozen_no_grad")
+
+    for part in (module, *module.children()):
+        part.register_forward_pre_hook(check)
 
 
 def _mentions(cls, name):
@@ -100,17 +120,29 @@ def _decay_rounds_away(framework):
     return bool(rates) and max(rates) * decay < _DECAY_BOUND
 
 
-def apply(framework):
+def _candidates(framework):
+    """(owner, name, module): the sub-models of the world-model backbone and of the framework itself. A backbone's
+    sub-model also has to be left alone by the framework's code; the framework's own are checked on its source."""
     backbone = getattr(framework, "backbone", None)
-    if backbone is None or not _decay_rounds_away(framework):
+    if isinstance(backbone, torch.nn.Module):
+        for name, module in backbone.named_children():
+            if not _mentions(type(framework), name):
+                yield backbone, name, module
+    for name, module in framework.named_children():
+        if module is not backbone:
+            yield framework, name, module
+
+
+def apply(framework):
+    if not isinstance(framework, torch.nn.Module) or not _decay_rounds_away(framework):
         return False
     frozen = []
-    for name in _SUB_MODELS:
-        module = getattr(backbone, name, None)
-        params = [p for p in getattr(module, "parameters", lambda: ())() if p.requires_grad]
-        if not params or not _calls_under_no_grad(type(backbone), name) or _mentions(type(framework), name):
+    for owner, name, module in _candidates(framework):
+        params = [p for p in module.parameters() if p.requires_grad]
+        if not params or not _calls_under_no_grad(type(owner), name):
             continue
         module.requires_grad_(False)
+        _guard(name, module)
         frozen.append(f"{name} ({sum(p.numel() for p in params) / 1e9:.1f} B)")
     if frozen:
         print(f"[starVLA.fast] frozen_no_grad: {', '.join(frozen)} run under torch.no_grad only: left out of the "

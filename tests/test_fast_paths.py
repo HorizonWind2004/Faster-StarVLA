@@ -807,6 +807,33 @@ class _GradVaeBackbone(_NoGradBackbone):
         return self.vae(x)  # outside no_grad: the VAE may receive a gradient
 
 
+class _SpatialFramework(torch.nn.Module):
+    """A framework the way ABot-M0 is written: its own spatial model called under no_grad only."""
+
+    def __init__(self):
+        super().__init__()
+        self.spatial_model, self.head = torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)
+
+    def forward(self, x):
+        with torch.no_grad():
+            tokens = self.spatial_model(x)
+        return self.head(tokens)
+
+
+class _AliasFramework(torch.nn.Module):
+    """The same model, also reached through an alias outside no_grad: it gets gradients and must stay trainable."""
+
+    def __init__(self):
+        super().__init__()
+        self.spatial_model, self.head = torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)
+
+    def forward(self, x):
+        with torch.no_grad():
+            self.spatial_model(x)
+        encoder = self.spatial_model
+        return self.head(encoder(x))
+
+
 def test_frozen_no_grad():
     """frozen_no_grad leaves a world model's no_grad-only sub-models out of the optimizer when the weight decay rounds
     away; and the upstream AdamW update (zero gradient) leaves such parameters bitwise unchanged."""
@@ -829,6 +856,24 @@ def test_frozen_no_grad():
     assert frozen.apply(fw) and all(p.requires_grad for p in fw.backbone.vae.parameters())  # text encoder only
     assert not frozen.apply(framework(_NoGradBackbone(), decay=1e-2))  # this decay would change the weights
     assert not frozen.apply(framework(_NoGradBackbone(), lrs=("x", 1e-4)))
+    for cls, freezes in ((_SpatialFramework, True), (_AliasFramework, False)):  # the framework's own sub-models
+        fw = cls()
+        fw.config = framework(_NoGradBackbone()).config
+        assert frozen.apply(fw) is freezes
+        assert all(p.requires_grad is not freezes for p in fw.spatial_model.parameters())
+        assert all(p.requires_grad for p in fw.head.parameters())
+    fw = _SpatialFramework()  # the runtime guard: a frozen sub-model run with gradients in training fails loudly
+    fw.config = framework(_NoGradBackbone()).config
+    frozen.apply(fw)
+    fw(torch.randn(2, 4)).sum().backward()
+    try:
+        fw.spatial_model(torch.randn(2, 4))
+        raise AssertionError("the guard did not fire")
+    except RuntimeError as error:
+        assert "frozen_no_grad" in str(error)
+    with torch.no_grad():
+        fw.eval()
+        fw.spatial_model(torch.randn(2, 4))
 
     # what upstream does to them: DeepSpeed hands AdamW a zero gradient; the result is the same bits
     weights = torch.randn(4096) * 3
@@ -838,7 +883,8 @@ def test_frozen_no_grad():
         param.grad = torch.zeros_like(param)
         optimizer.step()
     assert torch.equal(param.detach(), weights)
-    print("ok frozen_no_grad: no_grad-only sub-models frozen, a sub-model called with gradients kept, "
+    print("ok frozen_no_grad: no_grad-only sub-models frozen (a world model's, a framework's own), one called with "
+          "gradients or through an alias kept, "
           "AdamW with a zero gradient and weight decay 1e-8 leaves the weights bitwise unchanged")
 
 
