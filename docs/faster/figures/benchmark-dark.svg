@@ -42,13 +42,13 @@
 <text x="40.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">bit-exact level</text>
 <text x="40.0" y="381.0" font-size="12" fill="#9198a1">23,336 tensors bitwise identical</text>
 <line x1="246.0" y1="306.0" x2="246.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
-<text x="260.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">17</text>
+<text x="260.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">23</text>
 <text x="260.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">recipes measured</text>
-<text x="260.0" y="381.0" font-size="12" fill="#9198a1">12 frameworks · 6 backbones</text>
+<text x="260.0" y="381.0" font-size="12" fill="#9198a1">18 frameworks · 9 backbones</text>
 <line x1="466.0" y1="306.0" x2="466.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
-<text x="480.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">3.20×</text>
+<text x="480.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">3.65×</text>
 <text x="480.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">best all recipe</text>
-<text x="480.0" y="381.0" font-size="12" fill="#9198a1">QwenOFT · Qwen2.5-VL-3B</text>
+<text x="480.0" y="381.0" font-size="12" fill="#9198a1">MiniCPMRobotManip · MiniCPM…</text>
 <line x1="686.0" y1="306.0" x2="686.0" y2="388.0" stroke="#30363d" stroke-width="1" stroke-linecap="butt"/>
 <text x="700.0" y="338.0" font-size="32" fill="#f0f6fc" font-weight="700">97.3%</text>
 <text x="700.0" y="362.0" font-size="13.5" fill="#f0f6fc" font-weight="600">LIBERO success</text>

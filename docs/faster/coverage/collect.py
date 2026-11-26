@@ -33,6 +33,16 @@ SESSIONS = {
     "73509": {"session": 13, "node": None, "when": "25 Nov, evening", "note": "session 13 continued: Gemma 4 at batch 4, Qwen3.5 (ref / exact)"},
     "73564": {"session": 13, "node": None, "when": "25 Nov, evening", "note": "Qwen3.5 all / max: compile_lm leaves linear-attention models alone"},
     "73603": {"session": 13, "node": None, "when": "25 Nov, night", "note": "Gemma 4 all / max: the causal mask is built for unpadded batches too"},
+    "73610": {"session": 13, "node": None, "when": "26 Nov, night", "note": "MiniCPM-V 4.6 (GR00T, PI), Gemma 4 + GR00T, Wan + OFT"},
+    "73619": {"session": 13, "node": None, "when": "26 Nov, night", "note": "Wan + GR00T with video_prep; MiniCPM all ablations; profiles"},
+    "73648": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-V all / max with the vision tower on flash-attention; MiniCPM-RobotManip; WanPI"},
+    "73651": {"session": 13, "node": None, "when": "26 Nov", "note": "WanGR00T / WanOFT, every level in one job: + frozen_no_grad"},
+    "73653": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip: failed in the trainer's periodic action eval (8-D LIBERO state)"},
+    "73673": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip, every level in one job (head inputs cast to bf16, periodic eval off)"},
+    "73678": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip again, every level in one job: all / max with MiniCPM-V on SDPA and its vision tower on flash-attention"},
+    "73717": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip diagnosis: exact / all / all,-adamw_compiled alternated, exact stages and host profile"},
+    "73721": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip, every level in one job: all / max with the vision tower on flash-attention; WanGR00T all, generalized frozen_no_grad"},
+    "73674": {"session": 13, "node": None, "when": "26 Nov", "note": "WanPI (head depth 30), every level in one job: + frozen_no_grad"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
 }
 OTHERS = WS / "runs/others"  # session 4
@@ -49,7 +59,25 @@ COMBO_INFO = {  # run directory -> framework, backbone, attention the config ask
     "pi0": ("PI0", "PaliGemma (openpi)", "eager"), "pi05": ("PI05", "PaliGemma (openpi)", "eager"),
     # session 13, transformers 5 for Qwen3.5 and Gemma 4 (the attention each recipe ends up with)
     "q35_gr00t": ("QwenGR00T", "Qwen3.5-0.8B", FA2), "q35_oft": ("QwenOFT", "Qwen3.5-0.8B", FA2),
-    "gemma4_pi_b": ("Gemma4PI", "Gemma-4-E2B (batch 4)", "eager"), "wan_gr00t": ("WanGR00T", "Wan2.2-TI2V-5B (world model)", SDPA),
+    "gemma4_pi_b": ("Gemma4PI", "Gemma-4-E2B (batch 4)", "eager"),
+    "gemma4_gr00t": ("Gemma4GR00T", "Gemma-4-E2B (batch 4)", "eager"),
+    "minicpm_gr00t": ("MiniCPMGR00T", "MiniCPM-V 4.6", FA2), "minicpm_pi": ("MiniCPMPI", "MiniCPM-V 4.6", FA2),
+    "minicpm_rm": ("MiniCPMRobotManip", "MiniCPM-V 4.6 (RobotManip checkpoint; 10-D shapes from LIBERO)", "eager"),
+    "wan_pi_b": ("WanPI", "Wan2.2-TI2V-5B (world model; head depth 30, upstream fails with 36)", SDPA), "wan_oft": ("WanOFT", "Wan2.2-TI2V-5B (world model)", SDPA), "wan_gr00t_b": ("WanGR00T", "Wan2.2-TI2V-5B (world model)", SDPA),
+}
+
+
+# session 13 reruns on later trees: which file each level of a combination is read from
+RERUNS = {
+    # r22l (one job, every level): + frozen_no_grad
+    **{combo: {"ref": "ref_c_summary.json", "exact": "exact_c_summary.json", "all": "all_c_summary.json",
+               "all_tf32_max": "max_c_summary.json"} for combo in ("wan_gr00t_b", "wan_oft")},
+    "minicpm_rm": {"ref": "ref_g_summary.json", "exact": "exact_g_summary.json", "all": "all_g_summary.json",
+                   "all_tf32_max": "max_g_summary.json"},  # r22q (73721), one job
+    "wan_pi_b": {"ref": "ref_c_summary.json", "exact": "exact_c_summary.json", "all": "all_c_summary.json",
+                 "all_tf32_max": "max_c_summary.json"},  # r22n (73674), one job, + frozen_no_grad
+    # r22k: all / max with the vision tower on flash-attention; ref / exact stay those of r22i (another job)
+    **{combo: {"all": "all_b_summary.json", "all_tf32_max": "max_b_summary.json"} for combo in ("minicpm_gr00t", "minicpm_pi")},
 }
 
 
@@ -160,9 +188,12 @@ for combo, framework, backbone, attention in COMBOS:
 def session_rows(session):
     out = []
     for combo, (framework, backbone, attention) in COMBO_INFO.items():
-        cells = {tag: timing(combo, (f"{tag}_summary.json",), ROOTS[session]) for tag in TAGS}
+        files = {tag: f"{tag}_summary.json" for tag in TAGS} | {"all_tf32_max": "max_summary.json"}
+        if session == 13 and combo in RERUNS:
+            files |= RERUNS[combo]
+        cells = {tag: timing(combo, (files[tag],), ROOTS[session]) for tag in TAGS}
         if not cells["all_tf32"]:  # the precision level: `max`, which is `all,tf32` on the Qwen frameworks
-            cells["all_tf32"] = timing(combo, ("max_summary.json",), ROOTS[session])
+            cells["all_tf32"] = timing(combo, (files["all_tf32_max"],), ROOTS[session])
         if any(cells.values()):
             out.append({"framework": framework, "backbone": backbone, "attention": attention, "combo": combo,
                         "session": session, **cells})

@@ -5,7 +5,7 @@
 **starVLA 的训练步快 2.00×，由 AI agent 按 [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent) 的方法优化。**
 
 Faster-StarVLA 就是 [starVLA](https://github.com/starVLA/starVLA) 加上一个包 [`starVLA/fast/`](starVLA/fast/__init__.py)：
-25 条加速路径，覆盖数据加载、底座、动作头和 DeepSpeed 优化器这几步，用一个环境变量选择。`STARVLA_FAST=exact`
+28 条加速路径，覆盖数据加载、底座、动作头和 DeepSpeed 优化器这几步，用一个环境变量选择。`STARVLA_FAST=exact`
 时，确定性模式下的训练步与上游逐位相同，只是更快；`all` 再加上编译层等不降低任何运算精度的改动；`max` 再加精度设置。
 配置、脚本和各个框架都不用改。
 
@@ -30,7 +30,7 @@ Qwen3-VL-4B 底座、每卡 batch 16、全部 45.0 亿参数可训练。`exact` 
 
 - **逐位一致还是统计等价，自己选。** `exact`：1.74×，记录的 23,336 个张量与上游逐位相同。`all`：2.00×，
   每个训练端点都在上游自身种子间波动的 3σ 以内。
-- **不止一个配方。** 实测了 17 个框架 × 底座组合，每个都和自己的基线比：`all` 为 1.33×–3.20×，`max` 最高
+- **不止一个配方。** 实测了 23 个框架 × 底座组合，每个都和自己的基线比：`all` 为 1.33×–3.65×，`max` 最高
   4.43×（QwenDiscreteDiffusion + Qwen3-VL-4B）。
 - **训出来的策略能用。** 打开全部加速路径在 2 张卡上训 30,000 步，LIBERO 平均成功率 97.3%（官方 8 卡 checkpoint
   按同样方式评测：98.65%）。
@@ -97,6 +97,8 @@ N1 同精度下的重排，N2 改变了数据类型或数学模式。
 | 加速路径 | 档位 | 作用位置 | 做什么、适用范围 |
 |---|---|---|---|
 | `worker_prep` | exact | 数据加载 | 提示词拼接、VLM processor 和旋转位置索引放到数据加载进程里做，不再占用训练进程；适用于所有把 batch 的图像和提示词交给底座接口（`build_qwenvl_inputs`）的框架，底座接口为 Qwen2.5-VL、Qwen3-VL、Cosmos-Reason2；会改写提示词的框架用一个函数登记改写方式 |
+| `worker_prep_framework` | exact | 数据加载 | 同上，用于自己构建底座输入的框架（MiniCPM-RobotManip：它对 MiniCPM-V processor 的调用）；启用前先和框架自己的构建结果比对 |
+| `video_prep` | exact | 数据加载 | 世界模型底座逐样本的图像缩放和归一化（Wan、Cosmos-Predict2）放到数据加载进程里做；工作进程里的 processor 先和训练进程里的比对 |
 | `worker_examples` | exact | 数据加载 | PI0 / PI05：框架自己的样本预处理（图像缩放与填充、状态和动作填充）放到 DataLoader 工作进程里做 |
 | `vision_attn` | exact | 视觉塔 | 每层一次批量注意力调用，取代逐张图片各算一次、每层还要和主机同步一次的做法；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔，注意力实现为 SDPA；只在当前 GPU 上自检确认批量调用逐位一致的图像形状上启用 |
 | `vision_pos` | exact | 视觉塔 | 位置表按网格尺寸只建一次，不再每次前向都建；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔 |
@@ -104,11 +106,12 @@ N1 同精度下的重排，N2 改变了数据类型或数学模式。
 | `hidden_only` | exact | 语言模型 | 不再计算用不到的词表 logits；任何带 LM head 的底座，调用时只要隐状态、不带 labels |
 | `grad_norm` | exact | 优化器步 | 梯度裁剪的范数不再把每个梯度复制成 fp64（主配方上每步写入再读回 18 GB）；任何用 DeepSpeed ZeRO-2 训练的框架 |
 | `allreduce` | exact | 优化器步 | 梯度桶原地 all-reduce；任何用 DeepSpeed ZeRO-2 训练的框架 |
-| `sdpa` | all | 整个底座 | 用 flash-attention 加载的底座（或者只因某个子模型没有 SDPA 而用 eager 的底座，如 Gemma 4）切换到 PyTorch 的 scaled-dot-product attention：同一种注意力，换一个实现；下面针对 SDPA 的路径和编译层都依赖它 |
+| `sdpa` | all | 整个底座 | 用 flash-attention 加载的底座（或者只因某个子模型没有 SDPA 而用 eager 的底座，如 Gemma 4）切换到 PyTorch 的 scaled-dot-product attention：同一种注意力，换一个实现；下面针对 SDPA 的路径和编译层都依赖它。离开 flash-attention 后会逐个切片或窗口调用注意力、又不在 `vision_attn` 批量化范围内的视觉塔（MiniCPM-V 4.6）保留 flash-attention |
 | `vision_attn_relaxed` | all | 视觉塔 | 对所有尺寸一致的图像形状做批量视觉注意力（末位舍入可能不同） |
 | `compile_vision`、`compile_lm` | all | 视觉塔、语言模型 | 视觉 block 和解码器层在训练调用时用 Inductor 编译，并用 `gc.freeze()` 消除编译带来的垃圾回收停顿；适用于有 `model.visual.blocks` / `model.language_model.layers` 的底座（Qwen-VL 系列）以及其他 Hugging Face 多模态封装里的对应位置，且注意力实现为 SDPA；编译器处理不了的层保持 eager |
 | `compile_world_model` | all | 世界模型 | 视频世界模型底座（Wan、Cosmos-Predict2）的 transformer 各层在训练调用时用 Inductor 编译 |
 | `text_longest` | all | 世界模型 | Wan：4.7 B 的 UMT5 文本编码器只算到本批最长指令，不再算满 512 个填充位置（原版之后会把指令之后的位置清零）；只在编码器没有启用 dropout 时生效，也就是评测和推理。训练时原版让 UMT5 的 dropout 开着，这条路径不改动编码 |
+| `frozen_no_grad` | all | 优化器 | Wan：UMT5 文本编码器和 VAE（65 亿参数）只在 `torch.no_grad` 里运行，上游却让它们保持可训练，ZeRO-2 因此为它们保存 fp32 副本和 Adam 状态，每步用全零梯度更新，结果逐位不变；这里在建优化器前把它们冻结。只在对它们的每次调用都处于 `no_grad` 中、且学习率 × weight decay 在 fp32 下会被舍入掉时启用；梯度裁剪的范数会有舍入差异，优化器检查点与不开这条路径的运行不能互换 |
 | `condition_once` | all | 动作头 | 基于 starVLA 交叉注意力 DiT 的动作头（GR00T、逐层 flow matching、离散扩散）：框架为多个噪声水平复制的条件特征，每个样本只投影一次 |
 | `compile_head` | all | 动作头 | 动作头的各层（GR00T、逐层 flow matching、离散扩散、LangForce、QwenDual 的 DiT 头，以及 Adapter 头的残差块）用 Inductor 编译；dropout 沿用 eager 的随机数 |
 | `openpi_one_pass` | all | 视觉塔 | PI0 / PI05：一个 batch 的多个相机视角合成一次 SigLIP 调用，不再每个视角调用一次 |
@@ -151,7 +154,7 @@ N1 同精度下的重排，N2 改变了数据类型或数学模式。
 ## 其他框架和底座
 
 starVLA 是一个包含很多策略和底座的框架。上面的主要数字来自一个配方（QwenOFT + Qwen3-VL-4B）。同一个设置用在其他
-框架上的结果（硬件、数据、batch 相同，每一行都与同一作业里测的基线比较；共 17 个配方、12 个框架、6 个底座）：
+框架上的结果（硬件、数据、batch 相同，每一行都与同一作业里测的基线比较；共 23 个配方、18 个框架、9 个底座）：
 
 <p align="center">
   <picture>
@@ -178,7 +181,13 @@ starVLA 是一个包含很多策略和底座的框架。上面的主要数字来
 | QwenGR00T | Qwen3.5-0.8B | flash-attention | 599.9 | 443.7 (1.35×) | 407.3 (1.47×) | 406.7 (1.48×) | — |
 | QwenOFT | Qwen3.5-0.8B | flash-attention | 521.9 | 361.0 (1.45×) | 326.3 (1.60×) | 321.5 (1.62×) | — |
 | Gemma4PI | Gemma-4-E2B (batch 4) | eager | 1080.1 | 965.0 (1.12×) | 594.3 (1.82×) | 581.3 (1.86×) | — |
-| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
+| Gemma4GR00T | Gemma-4-E2B (batch 4) | eager | 1062.8 | 875.7 (1.21×) | 524.7 (2.03×) | 525.3 (2.02×) | — |
+| MiniCPMGR00T | MiniCPM-V 4.6 | flash-attention | 867.9 | 570.4 (1.52×) | 519.2 (1.67×) | 527.1 (1.65×) | — |
+| MiniCPMPI | MiniCPM-V 4.6 | flash-attention | 825.3 | 595.2 (1.39×) | 551.1 (1.50×) | 550.8 (1.50×) | — |
+| MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint; 10-D shapes from LIBERO) | eager | 1819.3 | 1532.9 (1.19×) | 498.4 (3.65×) | 499.7 (3.64×) | — |
+| WanPI | Wan2.2-TI2V-5B (world model; head depth 30, upstream fails with 36) | SDPA | 2102.5 | 1755.7 (1.20×) | 958.9 (2.19×) | 725.3 (2.90×) | — |
+| WanOFT | Wan2.2-TI2V-5B (world model) | SDPA | 1479.8 | 1136.2 (1.30×) | 540.2 (2.74×) | 538.0 (2.75×) | — |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1611.8 | 1238.3 (1.30×) | 631.5 (2.55×) | 622.9 (2.59×) | — |
 
 每一行都与同一个批处理作业里测的基线比较。同一节点上，不同作业之间同一配方的基线会相差最多 10%，所以不同作业的毫秒数不能直接比，行内的倍数可以比（见[各次测量](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)）。
 
@@ -192,15 +201,32 @@ Qwen2.5-VL 用 SDPA 时（bf16、B300），4 个全注意力视觉层（32 张�
 
 PI0 和 PI05 自带 PaliGemma，不走 `get_vlm_model`。它们的 `exact` 是 `worker_examples` 加两条 DeepSpeed 路径；`all` 再加 `unused_views`（LIBERO 只有这类模型所需三个相机视角中的两个，前缀从 816 个 token 缩到 560 个）和 `openpi_compile`；`max` 再加 `openpi_sdpa`。整个模型本来就跑在 bf16，所以 TF32 在这里没有作用。
 
-新底座（第 13 次测量）：Wan2.2-TI2V-5B、Qwen3.5-0.8B 和 Gemma-4-E2B 都在上表里。在真实的 Qwen3.5-0.8B 上，`exact` 路径的 loss
-和梯度逐位一致。为它们修了两处：`compile_lm` 不再编译带线性注意力层的语言模型（Qwen3.5），编译它会让第一步花 15 分钟、每步反而更慢；
-没有补齐的批次也拿到和其他批次一样的因果掩码，编译过的层不会在训练中途重新编译（Gemma 4 在 batch 4 时第 161 步遇到过）。Gemma 4
-用 batch 4，因为它的 eager 基线放不下 16。MiniCPM-V（MiniCPM-RobotManip 里的那个）和 Florence-2 只做距离检查：MiniCPM-RobotManip
-训练用的 10 维末端执行器数据这里没有，starVLA 的 Florence-2 接口只接受一个相机视角而 LIBERO 配方给两个（上游的训练步在它上面会失败，
-所以它的距离用的是底座自己的 loss）。`text_longest`（Wan）用于评测和推理。
-Qwen3.5 和 Gemma 4 需要 transformers 5，上游固定的是 4.57。没有实测：Molmo2、VILA，以及真实的
-Cosmos-Reason2 权重（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑过）；QwenFast（它把标签文本交给接口，`worker_prep` 遇到这种调用会
-留给训练进程处理）、InternVLA-M1 和 ABot-M0；Cosmos-Predict2 和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。
+新底座（第 13 次测量）：Wan2.2-TI2V-5B（WanGR00T、WanOFT、WanPI）、Qwen3.5-0.8B、Gemma-4-E2B 和 MiniCPM-V 4.6
+（MiniCPMGR00T、MiniCPMPI、MiniCPM-RobotManip）都在上表里。在真实的 Qwen3.5-0.8B 上，`exact` 路径的 loss 和梯度逐位一致。
+在它们身上起作用的主要是：
+
+- **Wan：上游忘了冻结的子模型（`frozen_no_grad`）。** starVLA 的 Wan 接口只在 `torch.no_grad` 下调用 UMT5 文本编码器和 VAE
+  （6.5 B 参数），但冻结它们的两行代码被注释掉了，于是 ZeRO-2 为它们保存 fp32 副本和 Adam 动量，每步用零梯度更新一次。
+  在 LIBERO 的学习率和 weight decay 下，这次更新逐位不改变权重，所以冻结之后训练结果不变，只省下开销：每个 Wan 配方每步
+  约 100 ms，显存峰值少 42–52 GiB（WanPI `all` 1.99× → 2.19×，`max` 2.53× → 2.90×）。同样的检查还找出了 ABot-M0 的 VGGT-1B
+  空间模型（这里没有计时）。被冻结的子模型一旦在开启梯度时被调用，会直接报错，而不是悄悄比上游少训练一部分。
+- **MiniCPM-V 4.6：逐块调用的视觉注意力。** 不用 flash-attention 时，它的视觉塔每层都要把分块长度读回 CPU，再对每个图像切片
+  和每个 2 × 2 窗口各调用一次注意力（每步约 9,000 次）。`all` 档让这个视觉塔用 flash-attention（配方本来就用时保持，否则从
+  SDPA 切过去），每层只调用一次：MiniCPM-RobotManip 每步 1,533 → 498 ms。`compile_vision` 不编译这种视觉塔。
+- **Qwen3.5 和 Gemma 4。** `compile_lm` 不再编译带线性注意力层的语言模型（Qwen3.5），编译它会让第一步花 15 分钟、每步反而
+  更慢；没有补齐的批次也拿到和其他批次一样的因果掩码，编译过的层不会在训练中途重新编译（Gemma 4 在 batch 4 时第 161 步遇到过）。
+  Gemma 4 用 batch 4，因为它的 eager 基线放不下 16。
+
+途中遇到的上游问题（计时时用让原版能跑起来的最小改动）：WanPI 设置的头部层数 30 已经不再被逐层动作头读取（它建了 36 层，
+运行时报 `IndexError`；计时用 `diffusion_model_cfg.num_layers=30`）；MiniCPM-RobotManip 发布的动作头是 fp32，而 starVLA 的
+DeepSpeed bf16 训练会把它存成 bf16（一个只用于计时的补丁在两棵代码树里都把动作头的输入转成同一精度），并且它训练用的 10 维
+末端执行器数据这里没有（动作和状态补零到它要的形状，所以它的 loss 数值没有意义）；starVLA 的 Florence-2 接口只接受一个相机
+视角而 LIBERO 配方给两个（只在底座的 loss 上做了距离检查）。`text_longest`（Wan）用于评测和推理。Qwen3.5、Gemma 4 和
+MiniCPM-V 4.6 需要 transformers 5，上游固定的是 4.57。新配方都在同一个作业里和自己的基线比；在真实模型上，舍入距离检查覆盖了它们
+的编译和动作头路径（WanGR00T、MiniCPM-RobotManip、Gemma4PI）；`frozen_no_grad` 和视觉塔切 flash-attention 由 CPU 测试（以及
+上面的逐位论证）覆盖；真实模型上的统计检验正在补跑。没有实测：Molmo2、VILA，以及真实的 Cosmos-Reason2 权重
+（它的接口只在 CPU 测试里用 Qwen3-VL 结构跑过）；QwenFast（它把标签文本交给接口，`worker_prep` 遇到这种调用会留给训练进程
+处理）、InternVLA-M1 和 ABot-M0；Cosmos-Predict2 和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。
 
 ## 验证
 

@@ -5,7 +5,7 @@
 **2.00× faster starVLA training steps, optimized by an AI agent following the [ResearchBoost-Agent](https://github.com/DAGroup-PKU/ResearchBoost-Agent) method.**
 
 Faster-StarVLA is [starVLA](https://github.com/starVLA/starVLA) plus one package, [`starVLA/fast/`](starVLA/fast/__init__.py):
-25 fast paths for the data loader, the backbone, the action head and the DeepSpeed optimizer step, selected by one
+28 fast paths for the data loader, the backbone, the action head and the DeepSpeed optimizer step, selected by one
 environment variable. With `STARVLA_FAST=exact` a training step is bitwise identical to upstream in deterministic mode, only faster; `all` adds
 compiled layers and other changes that keep the precision of every operation; `max` adds precision settings. Configs,
 scripts and frameworks stay as they are.
@@ -32,8 +32,8 @@ These figures are from the session in which the baseline timing was frozen. In t
 
 - **Exact or equivalent, your choice.** `exact`: 1.74×, with 23,336 recorded tensors bitwise identical to
   upstream. `all`: 2.00×, every training endpoint within 3σ of upstream's own seed-to-seed spread.
-- **Not just one recipe.** 17 framework × backbone recipes measured, each against its own baseline: `all`
-  gives 1.33× to 3.20×, `max` up to 4.43× (QwenDiscreteDiffusion on Qwen3-VL-4B).
+- **Not just one recipe.** 23 framework × backbone recipes measured, each against its own baseline: `all`
+  gives 1.33× to 3.65×, `max` up to 4.43× (QwenDiscreteDiffusion on Qwen3-VL-4B).
 - **Trains a working policy.** 30,000 steps with all fast paths on 2 GPUs reach a LIBERO average of 97.3% (the
   released 8-GPU checkpoint, evaluated the same way: 98.65%).
 - **No framework edited.** Four hooks call the package; every fast path checks the model it is given and skips itself
@@ -107,6 +107,8 @@ contains a switch or a line of it. A fast path is a module with `apply(target) -
 | Fast path | Level | Acts on | What it does, and where it applies |
 |---|---|---|---|
 | `worker_prep` | exact | data loader | the prompt construction, the VLM processor and the rotary position ids run in the data-loader workers instead of the training process; every framework that hands the batch's images and prompts to its backbone interface (`build_qwenvl_inputs`), on the Qwen2.5-VL, Qwen3-VL and Cosmos-Reason2 interfaces; a framework that edits the prompt registers the edit in one function |
+| `worker_prep_framework` | exact | data loader | the same for a framework that builds its backbone inputs itself (MiniCPM-RobotManip: its MiniCPM-V processor call), probed against the framework's own builder before it is used |
+| `video_prep` | exact | data loader | a world-model backbone's per-sample image resize and normalization (Wan, Cosmos-Predict2) run in the data-loader workers; the processor in the workers is probed against the one in the training process |
 | `worker_examples` | exact | data loader | PI0 / PI05: the framework's own sample preparation (image resize and padding, state and action padding) runs in the data-loader workers |
 | `vision_attn` | exact | vision tower | one batched attention call per layer instead of one call per image with a host synchronization in every layer; Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers with SDPA attention, for the image shapes where a probe on the running GPU shows the batched call is bitwise identical |
 | `vision_pos` | exact | vision tower | position tables built once per grid size instead of in every forward; Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers |
@@ -114,11 +116,12 @@ contains a switch or a line of it. A fast path is a module with `apply(target) -
 | `hidden_only` | exact | language model | the unused vocabulary logits are not computed; any backbone with an LM head, in calls that ask for hidden states without labels |
 | `grad_norm` | exact | optimizer step | the clipping norm without an fp64 copy of every gradient (18 GB written and read per step on the headline recipe); any framework trained with DeepSpeed ZeRO-2 |
 | `allreduce` | exact | optimizer step | gradient buckets all-reduced in place; any framework trained with DeepSpeed ZeRO-2 |
-| `sdpa` | all | whole backbone | a backbone loaded with flash-attention (or with eager attention only because a sub-model has no SDPA: Gemma 4) is switched to PyTorch's scaled-dot-product attention, the same attention from another kernel, which the SDPA paths and the compiled layers need |
+| `sdpa` | all | whole backbone | a backbone loaded with flash-attention (or with eager attention only because a sub-model has no SDPA: Gemma 4) is switched to PyTorch's scaled-dot-product attention, the same attention from another kernel, which the SDPA paths and the compiled layers need. A vision tower that off flash-attention would run one attention call per image slice or window, and that `vision_attn` does not batch (MiniCPM-V 4.6), keeps flash-attention |
 | `vision_attn_relaxed` | all | vision tower | the batched vision attention for every uniform image shape (last-bit differences) |
 | `compile_vision`, `compile_lm` | all | vision tower, language model | the vision blocks and decoder layers compiled with Inductor for training calls, with `gc.freeze()` against the garbage-collector pauses that compilation causes; backbones with `model.visual.blocks` / `model.language_model.layers` (the Qwen-VL families) and the corresponding places of other Hugging Face multimodal wrappers, with SDPA attention; a layer the compiler cannot handle stays eager |
 | `compile_world_model` | all | world model | the transformer blocks of a video world-model backbone (Wan, Cosmos-Predict2) compiled with Inductor for training calls |
 | `text_longest` | all | world model | Wan: the 4.7 B UMT5 text encoder on the batch's longest instruction instead of 512 padded tokens (upstream zeroes the positions past the instruction afterwards); only while the encoder has no active dropout: evaluation and inference. In training upstream keeps UMT5's dropout on, and the path leaves the encoding as it is |
+| `frozen_no_grad` | all | optimizer | Wan: the UMT5 text encoder and the VAE (6.5 B parameters) run under `torch.no_grad` only but are left trainable upstream, so ZeRO-2 keeps fp32 copies and Adam moments for them and updates them with zero gradients, which leaves them bitwise unchanged; they are frozen before the optimizer is built. Applies only when every call into them is under `no_grad` and lr × weight decay rounds away in fp32; the clipping norm differs in rounding, and optimizer checkpoints are not interchangeable with runs without it |
 | `condition_once` | all | action head | action heads built on starVLA's cross-attention DiT (GR00T, layer-wise flow matching, discrete diffusion heads): conditioning that the framework repeated for several noise levels is projected once per sample |
 | `compile_head` | all | action head | the blocks of the action head (the DiT heads of GR00T, the layer-wise flow-matching and discrete-diffusion heads, LangForce, QwenDual; the adapter head's residual blocks) compiled with Inductor, with eager's random draws for dropout |
 | `openpi_one_pass` | all | vision tower | PI0 / PI05: the camera views of a batch go through SigLIP in one call instead of one call per view |
@@ -166,7 +169,7 @@ See [why each change helps and what each one measured](docs/faster/measurement.m
 
 starVLA is a framework of many policies and backbones. The headline numbers are from one recipe (QwenOFT on
 Qwen3-VL-4B). The same setting on the other frameworks, same hardware, data and batch size, each row against the
-baseline of the same job (17 recipes, 12 frameworks, 6 backbones):
+baseline of the same job (23 recipes, 18 frameworks, 9 backbones):
 
 <p align="center">
   <picture>
@@ -193,7 +196,13 @@ baseline of the same job (17 recipes, 12 frameworks, 6 backbones):
 | QwenGR00T | Qwen3.5-0.8B | flash-attention | 599.9 | 443.7 (1.35×) | 407.3 (1.47×) | 406.7 (1.48×) | — |
 | QwenOFT | Qwen3.5-0.8B | flash-attention | 521.9 | 361.0 (1.45×) | 326.3 (1.60×) | 321.5 (1.62×) | — |
 | Gemma4PI | Gemma-4-E2B (batch 4) | eager | 1080.1 | 965.0 (1.12×) | 594.3 (1.82×) | 581.3 (1.86×) | — |
-| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — |
+| Gemma4GR00T | Gemma-4-E2B (batch 4) | eager | 1062.8 | 875.7 (1.21×) | 524.7 (2.03×) | 525.3 (2.02×) | — |
+| MiniCPMGR00T | MiniCPM-V 4.6 | flash-attention | 867.9 | 570.4 (1.52×) | 519.2 (1.67×) | 527.1 (1.65×) | — |
+| MiniCPMPI | MiniCPM-V 4.6 | flash-attention | 825.3 | 595.2 (1.39×) | 551.1 (1.50×) | 550.8 (1.50×) | — |
+| MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint; 10-D shapes from LIBERO) | eager | 1819.3 | 1532.9 (1.19×) | 498.4 (3.65×) | 499.7 (3.64×) | — |
+| WanPI | Wan2.2-TI2V-5B (world model; head depth 30, upstream fails with 36) | SDPA | 2102.5 | 1755.7 (1.20×) | 958.9 (2.19×) | 725.3 (2.90×) | — |
+| WanOFT | Wan2.2-TI2V-5B (world model) | SDPA | 1479.8 | 1136.2 (1.30×) | 540.2 (2.74×) | 538.0 (2.75×) | — |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1611.8 | 1238.3 (1.30×) | 631.5 (2.55×) | 622.9 (2.59×) | — |
 
 Every row is compared with a baseline from its own batch job. Between jobs on the same node the baseline of one recipe moved by up to 10%, so milliseconds of different jobs are not comparable; the ratios within a row are ([sessions](docs/faster/measurement.md#other-frameworks-and-backbones-step-time)).
 
@@ -207,19 +216,40 @@ On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the
 
 PI0 and PI05 bring their own PaliGemma instead of a `get_vlm_model` backbone. `exact` is `worker_examples` and the two DeepSpeed paths there; `all` adds `unused_views` (LIBERO has two of the three camera views these models expect, so the prefix shrinks from 816 to 560 tokens) and `openpi_compile`; `max` adds `openpi_sdpa`. The whole model already runs in bf16, so TF32 changes nothing there.
 
-New backbones (session 13): Wan2.2-TI2V-5B, Qwen3.5-0.8B and Gemma-4-E2B are in the table above. On the real
-Qwen3.5-0.8B the `exact` paths leave loss and gradients bitwise identical. Two of the paths were fixed for them on the
-way: `compile_lm` leaves a language model with linear-attention layers (Qwen3.5) alone, since compiling it made the
-first step take 15 minutes and the step slower; and a batch without padding gets the same causal mask as any other
-batch, so compiled layers are not compiled again in the middle of training (Gemma 4 at batch 4 hit one at step 161).
-Gemma 4 runs at batch 4 because its eager baseline does not fit 16. MiniCPM-V (inside MiniCPM-RobotManip) and Florence-2
-get distance checks only: MiniCPM-RobotManip trains on 10-D end-effector data that is not here, and starVLA's
-Florence-2 interface takes one camera view where the LIBERO recipe gives two (upstream's step fails on it, so its
-distance is on the backbone's loss). `text_longest` (Wan) is for evaluation and inference. Qwen3.5 and
-Gemma 4 need transformers 5; upstream pins 4.57. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
-interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface, which `worker_prep` leaves to the training
-process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only frameworks; and the co-training and VLM trainers
-(they call the same hooks).
+New backbones (session 13): Wan2.2-TI2V-5B (WanGR00T, WanOFT, WanPI), Qwen3.5-0.8B, Gemma-4-E2B and MiniCPM-V 4.6
+(MiniCPMGR00T, MiniCPMPI, MiniCPM-RobotManip) are in the table above. On the real Qwen3.5-0.8B the `exact` paths leave
+loss and gradients bitwise identical. What made the difference on them:
+
+- **Wan: sub-models left trainable by mistake (`frozen_no_grad`).** starVLA's Wan interface runs its UMT5 text encoder
+  and VAE (6.5 B parameters) under `torch.no_grad` only, but the lines that freeze them are commented out, so ZeRO-2
+  keeps fp32 copies and Adam moments for them and updates them with zero gradients every step. With LIBERO's learning
+  rates and weight decay that update leaves the weights bitwise unchanged, so freezing them changes nothing but the
+  cost: about 100 ms per step and 42–52 GiB of peak memory on every Wan recipe (WanPI `all` 1.99× → 2.19×, `max`
+  2.53× → 2.90×). The same check flags ABot-M0's VGGT-1B spatial model (not timed here). A frozen sub-model that is
+  ever run with gradients raises instead of silently training less than upstream.
+- **MiniCPM-V 4.6: per-chunk vision attention.** Off flash-attention its vision tower reads the chunk lengths back to
+  the host in every layer and makes one attention call per image slice and per 2 × 2 window (about 9,000 calls per
+  step). The `all` level runs that tower on flash-attention (kept there when the recipe loads it, moved there from SDPA
+  otherwise), one call per layer: MiniCPM-RobotManip 1,533 → 498 ms per step. `compile_vision` leaves such towers alone.
+- **Qwen3.5 and Gemma 4.** `compile_lm` leaves a language model with linear-attention layers (Qwen3.5) alone, since
+  compiling it made the first step take 15 minutes and the step slower; and a batch without padding gets the same causal
+  mask as any other batch, so compiled layers are not compiled again in the middle of training (Gemma 4 at batch 4 hit
+  one at step 161). Gemma 4 runs at batch 4 because its eager baseline does not fit 16.
+
+Upstream failures met on the way, timed with the smallest change that makes the reference run: WanPI sets a head depth
+of 30 that the layer-wise head no longer reads (it builds 36 layers and fails with `IndexError`; timed with
+`diffusion_model_cfg.num_layers=30`); MiniCPM-RobotManip's released action head is fp32 while starVLA's DeepSpeed bf16
+trainer stores it in bf16 (a timing-only patch casts the head's inputs, in both trees), and it trains on 10-D
+end-effector data that is not here (actions and states are zero-padded to its shapes, so its loss values are not
+meaningful); starVLA's Florence-2 interface takes one camera view where the LIBERO recipe gives two (distance checked
+on the backbone's loss only). `text_longest` (Wan) is for evaluation and inference. Qwen3.5, Gemma 4 and MiniCPM-V 4.6
+need transformers 5; upstream pins 4.57. The new recipes are timed against their own baseline in one job; on the
+real models, the rounding-distance check covers their compile and head paths (WanGR00T, MiniCPM-RobotManip, Gemma4PI);
+`frozen_no_grad` and the flash-attention vision tower are covered by the CPU tests (and the bitwise argument above);
+the statistical gate on the real models is in progress. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
+interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface,
+which `worker_prep` leaves to the training process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only
+frameworks; and the co-training and VLM trainers (they call the same hooks).
 
 ## Validation
 

@@ -227,7 +227,13 @@ the same job:
 | QwenGR00T | Qwen3.5-0.8B | flash-attention | 599.9 | 443.7 (1.35×) | 407.3 (1.47×) | 406.7 (1.48×) | — | 13 | 28.2 / 27.9 / 25.8 |
 | QwenOFT | Qwen3.5-0.8B | flash-attention | 521.9 | 361.0 (1.45×) | 326.3 (1.60×) | 321.5 (1.62×) | — | 13 | 21.7 / 21.2 / 20.9 |
 | Gemma4PI | Gemma-4-E2B (batch 4) | eager | 1080.1 | 965.0 (1.12×) | 594.3 (1.82×) | 581.3 (1.86×) | — | 13 | 164.3 / 164.3 / 82.0 |
-| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1584.0 | 1590.2 (1.00×) | 1111.7 (1.42×) | 1138.2 (1.39×) | — | 13 | 155.2 / 155.2 / 139.1 |
+| Gemma4GR00T | Gemma-4-E2B (batch 4) | eager | 1062.8 | 875.7 (1.21×) | 524.7 (2.03×) | 525.3 (2.02×) | — | 13 | 151.7 / 151.7 / 71.1 |
+| MiniCPMGR00T | MiniCPM-V 4.6 | flash-attention | 867.9 | 570.4 (1.52×) | 519.2 (1.67×) | 527.1 (1.65×) | — | 13 | 47.1 / 47.1 / 45.2 |
+| MiniCPMPI | MiniCPM-V 4.6 | flash-attention | 825.3 | 595.2 (1.39×) | 551.1 (1.50×) | 550.8 (1.50×) | — | 13 | 45.2 / 45.2 / 44.6 |
+| MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint; 10-D shapes from LIBERO) | eager | 1819.3 | 1532.9 (1.19×) | 498.4 (3.65×) | 499.7 (3.64×) | — | 13 | 46.6 / 46.6 / 45.7 |
+| WanPI | Wan2.2-TI2V-5B (world model; head depth 30, upstream fails with 36) | SDPA | 2102.5 | 1755.7 (1.20×) | 958.9 (2.19×) | 725.3 (2.90×) | — | 13 | 190.6 / 190.6 / 118.3 |
+| WanOFT | Wan2.2-TI2V-5B (world model) | SDPA | 1479.8 | 1136.2 (1.30×) | 540.2 (2.74×) | 538.0 (2.75×) | — | 13 | 154.1 / 154.1 / 87.7 |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | SDPA | 1611.8 | 1238.3 (1.30×) | 631.5 (2.55×) | 622.9 (2.59×) | — | 13 | 155.2 / 155.2 / 92.0 |
 
 The baseline is the upstream code with the recipe's settings; a speedup is against the baseline of the same row, which was measured in the same batch job. The last column of the README's table is a comparison of `exact` with the baseline on real weights: one training step (loss and every gradient) and one `predict_action` call.
 
@@ -276,7 +282,13 @@ by chance as well; `exact` is bitwise identical to the baseline and shows how mu
 | QwenGR00T | Qwen3.5-0.8B | 13 | 0.7574 ± 0.016 | 0.751 ± 0.016 | 0.733 ± 0.016 | 0.7546 ± 0.017 |
 | QwenOFT | Qwen3.5-0.8B | 13 | 0.256 ± 0.0019 | 0.2575 ± 0.0019 | 0.2546 ± 0.0019 | 0.2564 ± 0.0019 |
 | Gemma4PI | Gemma-4-E2B (batch 4) | 13 | 0.9892 ± 0.019 | 0.9961 ± 0.018 | 0.9801 ± 0.019 | 1.008 ± 0.018 |
-| WanGR00T | Wan2.2-TI2V-5B (world model) | 13 | 0.7208 ± 0.017 | 0.7066 ± 0.016 | 0.7047 ± 0.016 | 0.706 ± 0.016 |
+| Gemma4GR00T | Gemma-4-E2B (batch 4) | 13 | 0.9615 ± 0.013 | 0.9607 ± 0.013 | 0.9573 ± 0.014 | 0.937 ± 0.014 |
+| MiniCPMGR00T | MiniCPM-V 4.6 | 13 | 0.7337 ± 0.017 | 0.7365 ± 0.017 | 0.7362 ± 0.017 | 0.72 ± 0.016 |
+| MiniCPMPI | MiniCPM-V 4.6 | 13 | 0.5753 ± 0.011 | 0.5682 ± 0.011 | 0.5732 ± 0.011 | 0.5824 ± 0.011 |
+| MiniCPMRobotManip | MiniCPM-V 4.6 (RobotManip checkpoint; 10-D shapes from LIBERO) | 13 | 136.5 ± 2.8 | 136.5 ± 2.8 | 136.5 ± 2.8 | 136.5 ± 2.8 |
+| WanPI | Wan2.2-TI2V-5B (world model; head depth 30, upstream fails with 36) | 13 | 0.5014 ± 0.0066 | 0.5039 ± 0.0062 | 0.5056 ± 0.0066 | 0.5004 ± 0.0066 |
+| WanOFT | Wan2.2-TI2V-5B (world model) | 13 | 0.2603 ± 0.0018 | 0.26 ± 0.0018 | 0.2596 ± 0.0017 | 0.2599 ± 0.0018 |
+| WanGR00T | Wan2.2-TI2V-5B (world model) | 13 | 0.7061 ± 0.016 | 0.6968 ± 0.016 | 0.673 ± 0.015 | 0.7129 ± 0.017 |
 
 ### Where the time goes, and the paths added after it (session 11)
 
