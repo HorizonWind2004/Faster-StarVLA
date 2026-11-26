@@ -12,6 +12,11 @@ Gemma 4 loads with neither flash-attention (its 256-wide heads) nor SDPA (its au
 5.24, so its recipes run eager attention, which materializes every score matrix in fp32: on LIBERO's two views of
 2,520 patches each the vision tower alone needs some 9 GiB per layer at batch 16. There the language model and the
 vision tower are switched to SDPA and the audio tower keeps eager attention.
+
+A vision tower whose attention off flash-attention reads the chunk lengths to the host in every layer and runs one
+call per image slice and per 2 x 2 window (MiniCPM-V 4.6), and that vision_attn does not batch, runs flash-attention
+instead when it is installed: kept there when the recipe loads it, moved there from SDPA or eager otherwise
+(MiniCPM-RobotManip loads MiniCPM-V 4.6 with SDPA).
 """
 from starVLA.fast import attention_implementation
 
@@ -22,9 +27,11 @@ def use_sdpa(vlm):
     if not callable(switch):
         return False
     source = _replaced(model)
+    keep = _per_chunk(model)
+    kept_configs = {id(m.config) for m in keep if getattr(m, "config", None) is not None}
+    moved = _flash_towers(model, kept_configs)
     if source is None:
-        return False
-    keep = _per_chunk(model) if source == "flash_attention_2" else set()
+        return moved
     try:
         if source != "flash_attention_2" or keep:
             raise ValueError  # the whole model cannot (or should not) run SDPA: never switch it as a whole
@@ -73,6 +80,24 @@ def _per_chunk(model):
         if seen[cls]:
             found.add(module)
     return found
+
+
+def _flash_towers(model, kept_configs):
+    """Move the per-chunk towers (the sub-models whose config the per-chunk attention modules read) that are not on
+    flash-attention there, where the class supports it and flash-attention is installed. True if one moved."""
+    moved = False
+    for module in model.modules():
+        sub_switch = getattr(module, "set_attn_implementation", None)
+        if module is model or not callable(sub_switch) or id(getattr(module, "config", None)) not in kept_configs or \
+                attention_implementation(module) == "flash_attention_2" or \
+                not getattr(module, "_supports_flash_attn", False):
+            continue
+        try:
+            sub_switch("flash_attention_2")
+            moved = True
+        except (ValueError, ImportError):
+            pass  # flash-attention not installed: keeps its implementation
+    return moved
 
 
 def _replaced(model):

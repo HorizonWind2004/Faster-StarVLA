@@ -34,9 +34,10 @@ class FastPath(NamedTuple):
 FAST_PATHS = {  # applied in this order
     "sdpa": FastPath(False, "backbone", "attention:use_sdpa",
                      "PyTorch SDPA attention where the config asks for flash-attention (or for eager attention only "
-                     "because a sub-model has no SDPA: Gemma 4): the same attention from another kernel, and the "
-                     "one the fast paths below accelerate. A vision tower that would run one SDPA call per image or "
-                     "window and that vision_attn does not batch (MiniCPM-V 4.6) keeps flash-attention"),
+                     "because a sub-model has no SDPA: Gemma 4): the same attention from another kernel, and the one "
+                     "the fast paths below accelerate. A vision tower that would run one attention call per image or "
+                     "window and that vision_attn does not batch (MiniCPM-V 4.6) runs flash-attention instead (kept, "
+                     "or moved there from SDPA or eager when installed)"),
     "attn_mask": FastPath(True, "backbone", "attn_mask:apply",
                           "causal + padding attention mask from two tensor ops instead of nested torch.vmap",
                           ("STARVLA_FAST_ATTN_MASK",)),
@@ -86,7 +87,7 @@ FAST_PATHS = {  # applied in this order
                            "decoder layers compiled with Inductor for training calls",
                            ("STARVLA_COMPILE_LM",)),
     "compile_vision": FastPath(False, "backbone", "compile:apply_vision",
-                               "vision blocks compiled with Inductor for training calls",
+                               "vision blocks compiled with Inductor for training calls (not a per-chunk tower)",
                                ("STARVLA_COMPILE_VISION",)),
     "compile_world_model": FastPath(False, "backbone", "compile:apply_world_model",
                                     "transformer blocks of a video world-model backbone (Wan, Cosmos-Predict2) "

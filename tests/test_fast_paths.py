@@ -784,7 +784,26 @@ def test_minicpm_v_sdpa():
     assert ("MiniCPMV4_6VisionAttention", "flash_attention_2") in kinds, kinds
     assert ("MiniCPMV4_6VisionAttention", "sdpa") not in kinds, kinds
     assert not regional.apply_vision(vlm)
-    print("ok minicpm_v sdpa: language model on SDPA, the per-chunk vision tower kept on flash-attention")
+
+    # MiniCPM-RobotManip loads MiniCPM-V 4.6 with SDPA: the language model stays there, the per-chunk vision tower
+    # moves to flash-attention (accepted without a GPU here); without flash-attention it keeps SDPA
+    for flash in (True, False):
+        model = MiniCPMV4_6ForConditionalGeneration._from_config(config, attn_implementation="sdpa")
+        tower = model.model.vision_tower
+        if flash:
+            tower._check_and_adjust_attn_implementation = lambda implementation, **_: implementation
+        else:
+            def refuse(implementation, **_):
+                raise ImportError("flash_attn is not installed")
+            tower._check_and_adjust_attn_implementation = refuse
+        vlm = SimpleNamespace(model=model)
+        assert attention.use_sdpa(vlm) is flash
+        assert attention_implementation(model.model.language_model) == "sdpa"
+        vision = {m.config._attn_implementation for m in model.modules() if type(m).__name__ == "MiniCPMV4_6VisionAttention"}
+        assert vision == {"flash_attention_2" if flash else "sdpa"}, vision
+        assert not regional.apply_vision(vlm)
+    print("ok minicpm_v sdpa: language model on SDPA, the per-chunk vision tower on flash-attention (kept, or moved "
+          "there from SDPA); compile_vision leaves per-chunk towers alone")
 
 
 class _NoGradBackbone(torch.nn.Module):

@@ -239,7 +239,14 @@ def _causal_mask_for_none(layers, owner, path, vlm=None):
 def apply_vision(vlm):
     """Compile the blocks of the backbone's vision tower: `model.model.visual.blocks` in the Qwen-VL family (meant to
     be used with vision_attn, whose per-layer code has no host reads), the encoder layers of a SigLIP / CLIP style
-    tower elsewhere."""
+    tower elsewhere. Not a tower whose attention reads the chunk lengths to the host in every layer and runs one call
+    per chunk (MiniCPM-V 4.6 off flash-attention): every layer would break the graph there, and MiniCPM-RobotManip
+    ran 1,693 against 1,548 ms per step with it."""
+    from starVLA.fast.attention import _per_chunk
+
+    model = getattr(vlm, "model", None)
+    if isinstance(model, torch.nn.Module) and _per_chunk(model):
+        return False
     return _apply(vlm, ("model.model.visual.blocks", "model.model.vision_tower.vision_model.encoder.layers",
                         "model.vision_tower.vision_model.encoder.layers",
                         "model.model.vision_tower.encoder.layers",  # Gemma 4, MiniCPM-V 4.6 / 4.7 (transformers 5)
