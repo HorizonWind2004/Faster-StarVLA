@@ -100,19 +100,21 @@
 <text x="32.0" y="439.0" font-size="13.5" fill="#1f2328" font-weight="700">Qwen2.5-VL-3B</text>
 <line x1="32.0" y1="446.0" x2="928.0" y2="446.0" stroke="#e1e4e8" stroke-width="1" stroke-linecap="butt"/>
 <text x="46.0" y="470.0" font-size="13"><tspan fill="#1f2328">QwenOFT</tspan><tspan fill="#818b98" font-size="11.5">  SDPA</tspan></text>
-<line x1="300.0" y1="465.0" x2="550.9" y2="465.0" stroke="#afb8c1" stroke-width="2" stroke-linecap="round"/>
-<rect x="545.7" y="459.8" width="10.4" height="10.4" rx="1.5" fill="#eb6834" stroke="#f6f8fa" stroke-width="2"/>
-<circle cx="400.3" cy="465.0" r="5.5" fill="#2a78d6" stroke="#f6f8fa" stroke-width="2"/>
-<text x="770.0" y="469.5" font-size="13" fill="#59636e" text-anchor="end">1.88×</text>
-<text x="840.0" y="469.5" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end">3.20×</text>
-<text x="910.0" y="469.5" font-size="13" fill="#59636e" text-anchor="end">—</text>
+<line x1="300.0" y1="465.0" x2="547.8" y2="465.0" stroke="#afb8c1" stroke-width="2" stroke-linecap="round"/>
+<path d="M547.8,458.5 L554.3,465.0 L547.8,471.5 L541.3,465.0 Z" fill="#1baf7a" stroke="#f6f8fa" stroke-width="2" stroke-linejoin="round"/>
+<rect x="539.7" y="459.8" width="10.4" height="10.4" rx="1.5" fill="#eb6834" stroke="#f6f8fa" stroke-width="2"/>
+<circle cx="403.9" cy="465.0" r="5.5" fill="#2a78d6" stroke="#f6f8fa" stroke-width="2"/>
+<text x="770.0" y="469.5" font-size="13" fill="#59636e" text-anchor="end">1.91×</text>
+<text x="840.0" y="469.5" font-size="13" fill="#59636e" text-anchor="end">3.14×</text>
+<text x="910.0" y="469.5" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end">3.17×</text>
 <text x="46.0" y="500.0" font-size="13"><tspan fill="#1f2328">QwenOFT</tspan><tspan fill="#818b98" font-size="11.5">  flash-attn</tspan></text>
-<line x1="300.0" y1="495.0" x2="400.7" y2="495.0" stroke="#afb8c1" stroke-width="2" stroke-linecap="round"/>
-<rect x="395.5" y="489.8" width="10.4" height="10.4" rx="1.5" fill="#eb6834" stroke="#f6f8fa" stroke-width="2"/>
-<circle cx="341.1" cy="495.0" r="5.5" fill="#2a78d6" stroke="#f6f8fa" stroke-width="2"/>
-<text x="770.0" y="499.5" font-size="13" fill="#59636e" text-anchor="end">1.36×</text>
-<text x="840.0" y="499.5" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end">1.88×</text>
-<text x="910.0" y="499.5" font-size="13" fill="#59636e" text-anchor="end">—</text>
+<line x1="300.0" y1="495.0" x2="462.0" y2="495.0" stroke="#afb8c1" stroke-width="2" stroke-linecap="round"/>
+<path d="M462.0,488.5 L468.5,495.0 L462.0,501.5 L455.5,495.0 Z" fill="#1baf7a" stroke="#f6f8fa" stroke-width="2" stroke-linejoin="round"/>
+<rect x="453.3" y="489.8" width="10.4" height="10.4" rx="1.5" fill="#eb6834" stroke="#f6f8fa" stroke-width="2"/>
+<circle cx="338.4" cy="495.0" r="5.5" fill="#2a78d6" stroke="#f6f8fa" stroke-width="2"/>
+<text x="770.0" y="499.5" font-size="13" fill="#59636e" text-anchor="end">1.34×</text>
+<text x="840.0" y="499.5" font-size="13" fill="#59636e" text-anchor="end">2.39×</text>
+<text x="910.0" y="499.5" font-size="13" fill="#1f2328" font-weight="600" text-anchor="end">2.42×</text>
 <text x="46.0" y="530.0" font-size="13"><tspan fill="#1f2328">QwenGR00T</tspan><tspan fill="#818b98" font-size="11.5">  flash-attn</tspan></text>
 <line x1="300.0" y1="525.0" x2="428.8" y2="525.0" stroke="#afb8c1" stroke-width="2" stroke-linecap="round"/>
 <path d="M428.8,518.5 L435.3,525.0 L428.8,531.5 L422.3,525.0 Z" fill="#1baf7a" stroke="#f6f8fa" stroke-width="2" stroke-linejoin="round"/>

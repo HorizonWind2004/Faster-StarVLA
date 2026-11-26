@@ -41,6 +41,7 @@ SESSIONS = {
     "73673": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip, every level in one job (head inputs cast to bf16, periodic eval off)"},
     "73678": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip again, every level in one job: all / max with MiniCPM-V on SDPA and its vision tower on flash-attention"},
     "73717": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip diagnosis: exact / all / all,-adamw_compiled alternated, exact stages and host profile"},
+    "73792": {"session": 13, "node": None, "when": "26 Nov", "note": "Qwen2.5-VL-3B QwenOFT (SDPA and flash-attention configs), every level in one job: max had not been timed"},
     "73721": {"session": 13, "node": None, "when": "26 Nov", "note": "MiniCPM-RobotManip, every level in one job: all / max with the vision tower on flash-attention; WanGR00T all, generalized frozen_no_grad"},
     "73674": {"session": 13, "node": None, "when": "26 Nov", "note": "WanPI (head depth 30), every level in one job: + frozen_no_grad"},
     "72818": {"session": 8, "node": "C", "when": "24 Nov", "note": "final tree: judge, worker_examples and openpi_sdpa for PI0 / PI05"},
@@ -72,6 +73,8 @@ RERUNS = {
     # r22l (one job, every level): + frozen_no_grad
     **{combo: {"ref": "ref_c_summary.json", "exact": "exact_c_summary.json", "all": "all_c_summary.json",
                "all_tf32_max": "max_c_summary.json"} for combo in ("wan_gr00t_b", "wan_oft")},
+    **{combo: {"ref": "ref_h_summary.json", "exact": "exact_h_summary.json", "all": "all_h_summary.json",
+               "all_tf32_max": "max_h_summary.json"} for combo in ("oft_q25_sdpa", "oft_q25_fa2")},  # r22r (73792), one job
     "minicpm_rm": {"ref": "ref_g_summary.json", "exact": "exact_g_summary.json", "all": "all_g_summary.json",
                    "all_tf32_max": "max_g_summary.json"},  # r22q (73721), one job
     "wan_pi_b": {"ref": "ref_c_summary.json", "exact": "exact_c_summary.json", "all": "all_c_summary.json",

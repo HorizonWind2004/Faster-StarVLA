@@ -81,8 +81,8 @@ baseline of the same job (23 recipes, 18 frameworks, 9 backbones):
 | QwenAdapter | Qwen3-VL-4B | SDPA | 1052.3 | 767.9 (1.37×) | 553.0 (1.90×) | 555.8 (1.89×) | 1,226 gradients + actions ✓ |
 | LangForce | Qwen3-VL-4B | SDPA | 1439.6 | 905.7 (1.59×) | 686.5 (2.10×) | 673.7 (2.14×) | 961 gradients + actions ✓ |
 | QwenDual | Qwen3-VL-4B | SDPA | 1201.1 | 909.2 (1.32×) | 546.6 (2.20×) | 521.0 (2.31×) | 1,135 of 1,136 gradients + actions (the other 1 differs between two baseline runs) ✓ |
-| QwenOFT | Qwen2.5-VL-3B | SDPA | 1013.8 | 539.9 (1.88×) | 317.3 (3.20×) | — | 840 gradients + actions ✓ |
-| QwenOFT | Qwen2.5-VL-3B | flash-attention | 877.6 | 645.6 (1.36×) | 466.5 (1.88×) | — | 840 gradients + actions ✓ |
+| QwenOFT | Qwen2.5-VL-3B | SDPA | 1032.8 | 540.9 (1.91×) | 328.6 (3.14×) | 326.0 (3.17×) | 840 gradients + actions ✓ |
+| QwenOFT | Qwen2.5-VL-3B | flash-attention | 785.9 | 588.3 (1.34×) | 329.2 (2.39×) | 325.0 (2.42×) | 840 gradients + actions ✓ |
 | QwenGR00T | Qwen2.5-VL-3B | flash-attention | 861.9 | 692.9 (1.24×) | 405.3 (2.13×) | 405.2 (2.13×) | 1,072 gradients + actions ✓ |
 | PI0 | PaliGemma (openpi) | eager | 639.2 | 591.5 (1.08×) | 290.3 (2.20×) | 288.9 (2.21×) | — |
 | PI05 | PaliGemma (openpi) | eager | 670.2 | 626.8 (1.07×) | 308.3 (2.17×) | 315.9 (2.12×) | — |
@@ -103,7 +103,7 @@ Every row is compared with a baseline from its own batch job. Between jobs on th
 
 The flow-matching heads run in fp32. `condition_once` (in `all`) projects the conditioning that a framework repeats for several noise levels once per sample. `max` also lets the head's fp32 matrix products use TF32; where every block of the head projects VLM hidden states, those products are most of what is left (QwenPI 812 → 531 ms; QwenPI_v3 850 → 520 ms; QwenDiscreteDiffusion 1885 → 567 ms). TF32 is a precision setting rather than a reordering, so it is a level of its own. The judge accepts it on the headline recipe as statistically equivalent; the same test on QwenPI (`all` on 6 seeds and `max` on 4 seeds) finds every endpoint within the judge's limit of 3σ, the largest being 1.6σ (VLM update size with `max`) ([details](measurement.md#the-statistical-gate-on-qwenpi)), and the loss curves of the other frameworks over the 220 timed steps are indistinguishable from the baseline's ([numbers](measurement.md#tf32)).
 
-The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 878 → 646 (1.36×) → 467 (1.88×) ms.
+The Qwen2.5-VL recipes load the backbone with flash-attention. `exact` keeps it and applies the paths that do not depend on the attention kernel. `all` first switches the backbone to PyTorch's scaled-dot-product attention (`sdpa`), after which the SDPA paths and the compiled layers apply: QwenOFT 786 → 588 (1.34×) → 329 (2.39×) ms.
 
 On Qwen2.5-VL with SDPA (bf16, B300), the bitwise probe rejects batching for the four full-attention vision layers (32 images × 256 patches, head dimension 80), so `exact` batches only the 28 window-attention layers; `all` batches both.
 
