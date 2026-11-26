@@ -246,7 +246,7 @@ on the backbone's loss only). `text_longest` (Wan) is for evaluation and inferen
 need transformers 5; upstream pins 4.57. The new recipes are timed against their own baseline in one job; on the
 real models, the rounding-distance check covers their compile and head paths (WanGR00T, MiniCPM-RobotManip, Gemma4PI);
 `frozen_no_grad` and the flash-attention vision tower are covered by the CPU tests (and the bitwise argument above);
-the statistical gate on the real models is in progress. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
+on the real models (judge job 73722, tree 8ac4405 against upstream 99764f5): WanGR00T `exact` is bitwise (17,204 / 17,204 tensors after two steps and after evaluation); WanGR00T `all,-frozen_no_grad` and MiniCPMGR00T `all` pass the statistical gate (largest bias 1.91 sigma and 0.85 sigma; the lr x 1.02 control is rejected at 17.6 / 22.4 sigma). WanGR00T `all` reaches 3.05 sigma on one endpoint (size of the VLM update) on seed 0, less than upstream against itself on the same endpoint (4.78 sigma), and pooled over four seeds it is within 0.90 sigma on every endpoint: equivalent, but that endpoint's one-seed noise is larger than the six-seed sigma says. MiniCPMGR00T upstream does not reproduce itself bit for bit (3,175 / 16,436 tensors), so the bitwise gate cannot decide its `exact` level. Not measured: Molmo2, VILA and the real Cosmos-Reason2 weights (its
 interface is exercised by the CPU test on the Qwen3-VL architecture); QwenFast (it hands label text to the interface,
 which `worker_prep` leaves to the training process), InternVLA-M1 and ABot-M0; Cosmos-Predict2 and the vision-only
 frameworks; and the co-training and VLM trainers (they call the same hooks).

@@ -224,7 +224,7 @@ DeepSpeed bf16 训练会把它存成 bf16（一个只用于计时的补丁在两
 视角而 LIBERO 配方给两个（只在底座的 loss 上做了距离检查）。`text_longest`（Wan）用于评测和推理。Qwen3.5、Gemma 4 和
 MiniCPM-V 4.6 需要 transformers 5，上游固定的是 4.57。新配方都在同一个作业里和自己的基线比；在真实模型上，舍入距离检查覆盖了它们
 的编译和动作头路径（WanGR00T、MiniCPM-RobotManip、Gemma4PI）；`frozen_no_grad` 和视觉塔切 flash-attention 由 CPU 测试（以及
-上面的逐位论证）覆盖；真实模型上的统计检验正在补跑。没有实测：Molmo2、VILA，以及真实的 Cosmos-Reason2 权重
+上面的逐位论证）覆盖；真实模型上的评判（作业 73722，代码 8ac4405 对上游 99764f5）：WanGR00T 的 `exact` 逐位一致（两步后和评测后都是 17,204 / 17,204 个张量）；WanGR00T 的 `all,-frozen_no_grad` 和 MiniCPMGR00T 的 `all` 通过统计检验（最大偏差 1.91σ、0.85σ；学习率 ×1.02 的对照分别在 17.6σ、22.4σ 被拒绝）。WanGR00T 的 `all` 在种子 0 上有一个端点（VLM 更新幅度）到了 3.05σ，小于同一端点上上游自己对自己的 4.78σ；合并 4 个种子后每个端点都在 0.90σ 以内，判为等价，但这个端点单种子的噪声比 6 个种子估出的 σ 大。MiniCPMGR00T 的上游自己就不能逐位复现（3,175 / 16,436 个张量），所以它的 `exact` 档无法用逐位检查判定。没有实测：Molmo2、VILA，以及真实的 Cosmos-Reason2 权重
 （它的接口只在 CPU 测试里用 Qwen3-VL 结构跑过）；QwenFast（它把标签文本交给接口，`worker_prep` 遇到这种调用会留给训练进程
 处理）、InternVLA-M1 和 ABot-M0；Cosmos-Predict2 和纯视觉框架；co-training 与 VLM 训练脚本（它们调用的是同样的入口）。
 
