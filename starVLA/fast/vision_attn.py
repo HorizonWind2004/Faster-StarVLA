@@ -135,7 +135,8 @@ def install(modeling):
         if key not in layouts:
             if len(layouts) >= _MAX_ENTRIES:
                 layouts.pop(next(iter(layouts)))
-            shape = (attention.num_heads, weight.shape[1] // attention.num_heads, dtype, device)
+            # not from weight.shape: DeepSpeed ZeRO-3 leaves an empty placeholder outside the module's forward
+            shape = (attention.num_heads, attention.qkv.in_features // attention.num_heads, dtype, device)
             layouts[key] = (
                 _bitwise(_frame_layout(rows), *shape),
                 _bitwise(_window_layout(self, grid_thw), *shape) if windowed else None,

@@ -84,7 +84,8 @@ def apply(vlm):
         if head_input is None:  # the head was not called: nothing was skipped, nothing to add
             return outputs
         call["works"] = True
-        return HiddenOnlyOutput(outputs, upstream_head, head_input)
+        # the head module, not its bound forward: its hooks must run (DeepSpeed ZeRO-3 gathers the weight in one)
+        return HiddenOnlyOutput(outputs, lm_head, head_input)
 
     lm_head.forward = head_forward
     model.forward = forward

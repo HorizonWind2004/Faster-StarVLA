@@ -26,6 +26,13 @@ def _grid_key(grid_thw):
     return tuple(tuple(row) for row in grid_thw.tolist())  # one host read per forward
 
 
+def _table_key(grid_thw, *rest):
+    """The key of a table: the grid, and whether inference mode is on. A table made under torch.inference_mode()
+    (predict_action) is an inference tensor, which autograd refuses to save for a training step's backward, so the
+    two modes keep separate tables."""
+    return (_grid_key(grid_thw), torch.is_inference_mode_enabled(), *rest)
+
+
 def _remember(cache, key, value):
     if len(cache) >= _MAX_ENTRIES:
         cache.pop(next(iter(cache)))
@@ -39,7 +46,7 @@ def _memoize_rot_pos_emb(model_class):
 
     def rot_pos_emb(self, grid_thw):
         inv_freq = self.rotary_pos_emb.inv_freq
-        key = (_grid_key(grid_thw), str(inv_freq.device), str(inv_freq.dtype), id(self))
+        key = _table_key(grid_thw, str(inv_freq.device), str(inv_freq.dtype), id(self))
         hit = rot_cache.get(key)
         if hit is None:
             hit = _remember(rot_cache, key, original_rot(self, grid_thw).detach())
@@ -54,7 +61,7 @@ def _memoize_window_index(model_class):
     cache = {}
 
     def get_window_index(self, grid_thw):
-        key = (_grid_key(grid_thw), id(self))
+        key = _table_key(grid_thw, id(self))
         hit = cache.get(key)
         if hit is None:
             hit = _remember(cache, key, original(self, grid_thw))
@@ -115,7 +122,7 @@ def _install_qwen3(qwen3):
     def fast_pos_embed_interpolate(self, grid_thw):
         grid = _grid_key(grid_thw)
         weight = self.pos_embed.weight
-        key = (grid, str(weight.device), str(weight.dtype), self.num_grid_per_side)
+        key = (grid, torch.is_inference_mode_enabled(), str(weight.device), str(weight.dtype), self.num_grid_per_side)
         hit = interp_cache.get(key)
         if hit is None:
             hit = _remember(interp_cache, key, interp_indices(self, grid))
