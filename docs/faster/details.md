@@ -28,7 +28,7 @@ All of it lives in one package, [`starVLA/fast/`](../../starVLA/fast/__init__.py
 framework: where a backbone is built (`get_vlm_model`), where a framework is built (`build_framework`), where the
 trainer gets its DeepSpeed engine, and where the data loader is built. No framework and no backbone interface
 contains a switch or a line of it. A fast path is a module with `apply(target) -> bool` and one line in
-[`FAST_PATHS`](../../starVLA/fast/__init__.py); it returns `False` where it does not fit, and the log lists it as not applicable.
+[`FAST_PATHS`](../../starVLA/fast/__init__.py); it returns `False` where it does not fit, and the log lists it as not applicable. The exact paths that patch the transformers model code or move work into the data-loader workers are implemented in [`starVLA/model/modules/vlm/monkey_patch.py`](../../starVLA/model/modules/vlm/monkey_patch.py) and [`starVLA/dataloader/worker_prep.py`](../../starVLA/dataloader/worker_prep.py), the two files of the upstream pull request; their modules in `starVLA/fast/` are the registry entries.
 
 ## Every fast path
 
@@ -41,9 +41,8 @@ contains a switch or a line of it. A fast path is a module with `apply(target) -
 | `vision_attn` | exact | vision tower | one batched attention call per layer instead of one call per image with a host synchronization in every layer; Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers with SDPA attention, for the image shapes where a probe on the running GPU shows the batched call is bitwise identical |
 | `vision_pos` | exact | vision tower | position tables built once per grid size instead of in every forward; Qwen2-VL / Qwen2.5-VL / Qwen3-VL vision towers |
 | `attn_mask` | exact | language model | the causal + padding mask from two broadcasted tensor ops instead of four nested `torch.vmap` calls; any backbone whose transformers model builds its mask with `masking_utils` (Qwen, Gemma, Llama, Phi families), with SDPA attention |
-| `hidden_only` | exact | language model | the unused vocabulary logits are not computed; any backbone with an LM head, in calls that ask for hidden states without labels |
-| `grad_norm` | exact | optimizer step | the clipping norm without an fp64 copy of every gradient (18 GB written and read per step on the headline recipe); any framework trained with DeepSpeed ZeRO-2 |
-| `allreduce` | exact | optimizer step | gradient buckets all-reduced in place; any framework trained with DeepSpeed ZeRO-2 |
+| `hidden_only` | exact | language model | the unused vocabulary logits are not computed; any backbone with an LM head, in calls that ask for hidden states without labels. Such a call returns the model's output wrapped in an object that computes `logits` when they are read: every field has the upstream value, but the object is not a transformers `ModelOutput` (no `to_tuple()`, no `isinstance`) |
+| `allreduce` | exact | optimizer step | gradient buckets all-reduced in place; any framework trained with DeepSpeed ZeRO-2 on one or two GPUs with bf16 or fp32 gradients. Bitwise identical there except for gradient values below 2.4e-38 in magnitude, whose halves round; with more GPUs or fp16 gradients the path leaves DeepSpeed as it is |
 | `sdpa` | all | whole backbone | a backbone loaded with flash-attention (or with eager attention only because a sub-model has no SDPA: Gemma 4) is switched to PyTorch's scaled-dot-product attention, the same attention from another kernel, which the SDPA paths and the compiled layers need. A vision tower that off flash-attention would run one attention call per image slice or window, and that `vision_attn` does not batch (MiniCPM-V 4.6), keeps flash-attention |
 | `vision_attn_relaxed` | all | vision tower | the batched vision attention for every uniform image shape (last-bit differences) |
 | `compile_vision`, `compile_lm` | all | vision tower, language model | the vision blocks and decoder layers compiled with Inductor for training calls, with `gc.freeze()` against the garbage-collector pauses that compilation causes; backbones with `model.visual.blocks` / `model.language_model.layers` (the Qwen-VL families) and the corresponding places of other Hugging Face multimodal wrappers, with SDPA attention; a layer the compiler cannot handle stays eager |
@@ -160,7 +159,7 @@ verdict carries a tier:
 Before optimization the judge was shown to reject what it should (a changed training setup, a changed clipping
 threshold, a VLM without gradient, every learning rate × 1.02) and to pass an equivalent reordering.
 
-**`STARVLA_FAST=exact`.** With the seven exact fast paths that apply to this recipe on, two 2-step training cases in deterministic mode
+**`STARVLA_FAST=exact`.** With the exact fast paths that apply to this recipe on, two 2-step training cases in deterministic mode
 (one with the recipe's periodic evaluation between the steps), on both ranks: 23,336 recorded tensors (the
 loss, and the fp32 gradient, update and both Adam states of all 729 parameters) are bitwise identical to upstream,
 as are the learning rates, the random-number state and a digest of what was fed to the VLM.

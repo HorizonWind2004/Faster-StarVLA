@@ -32,10 +32,10 @@
    "gpu_util": 75.5
   },
   {
-   "label": "+ rotary ids in workers,\nfused grad norm",
+   "label": "+ rotary ids\nin workers",
    "step_ms": 528.6980036500609,
    "speedup": 1.715279615199106,
-   "switches": "worker_prep, grad_norm",
+   "switches": "worker_prep (and the former grad_norm, which changed nothing)",
    "peak_mem_gib": 66.215500831604,
    "gpu_util": 78.7
   },

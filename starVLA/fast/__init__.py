@@ -63,11 +63,9 @@ FAST_PATHS = {  # applied in this order
     "worker_examples": FastPath(True, "framework", "openpi:worker_examples",
                                 "PI0 / PI05: the framework's sample preparation (image resize and padding, state "
                                 "and action padding) in the data-loader workers", (), "openpi:collate"),
-    "grad_norm": FastPath(True, "engine", "deepspeed:fused_grad_norm",
-                          "DeepSpeed ZeRO-2 clipping norm without an fp64 copy of every gradient",
-                          ("STARVLA_DS_FUSED_GRAD_NORM",)),
     "allreduce": FastPath(True, "engine", "deepspeed:plain_allreduce",
-                          "DeepSpeed ZeRO-2 gradient buckets all-reduced in place",
+                          "DeepSpeed ZeRO-2 gradient buckets all-reduced in place (one or two ranks, bf16 / fp32 "
+                          "gradients; bitwise identical there except for values below 2.4e-38 in magnitude)",
                           ("STARVLA_DS_PLAIN_ALLREDUCE",)),
     # reads the clipping factor on the host: a synchronization in every step (bf16 steps have none otherwise) to save
     # one pass of 2.6 ms; selectable by name only
@@ -127,6 +125,11 @@ FAST_PATHS = {  # applied in this order
     "tf32": FastPath(False, "framework", "precision:apply_tf32",
                      "TF32 for fp32 matrix products (the fp32 action heads); lower precision than the default"),
 }
+# Former fast paths: the name and its variable are still accepted, and do nothing.
+REMOVED = {
+    "grad_norm": ("STARVLA_DS_FUSED_GRAD_NORM", "it saved nothing: torch.linalg.vector_norm(g, dtype=float64) makes "
+                  "the same fp64 copy as vector_norm(g.double())"),
+}
 PRECISION = frozenset({"openpi_sdpa", "tf32"})  # change the precision of an operation, not only its order
 BY_NAME_ONLY = frozenset({"reduce_to_owner", "unit_clip", "grad_cast"})
 LEVELS = {
@@ -136,6 +139,13 @@ LEVELS = {
 }
 _OFF = ("", "0", "off", "none", "false", "False")
 _cache = (None, frozenset())
+_noted = set()
+
+
+def _note_removed(name):
+    if name not in _noted:
+        _noted.add(name)
+        print(f"[starVLA.fast] {name}: no longer a fast path ({REMOVED[name][1]}); ignored", flush=True)
 
 
 def selection():
@@ -143,6 +153,7 @@ def selection():
     global _cache
     spec = os.environ.get("STARVLA_FAST", "")
     legacy = tuple(os.environ.get(var, "") for path in FAST_PATHS.values() for var in path.legacy)
+    legacy += tuple(os.environ.get(var, "") for var, _ in REMOVED.values())
     if _cache[0] == (spec, legacy):
         return _cache[1]
     names = set()
@@ -153,12 +164,18 @@ def selection():
             names |= LEVELS[token]
         elif token.lstrip("-") in FAST_PATHS:
             (names.discard if token.startswith("-") else names.add)(token.lstrip("-"))
+        elif token.lstrip("-") in REMOVED:
+            if not token.startswith("-"):
+                _note_removed(token)
         else:
             raise ValueError(f"STARVLA_FAST: unknown entry {token!r}; levels: {sorted(LEVELS)}, "
                              f"fast paths: {sorted(FAST_PATHS)}")
     for name, path in FAST_PATHS.items():
         if any(os.environ.get(var, "0") not in _OFF for var in path.legacy):
             names.add(name)
+    for name, (var, _) in REMOVED.items():
+        if os.environ.get(var, "0") not in _OFF:
+            _note_removed(name)
     _cache = ((spec, legacy), frozenset(names))
     return _cache[1]
 
@@ -237,9 +254,20 @@ def accelerate_engine(engine):
 
 
 def worker_collate(cfg, collate_fn):
-    """`collate_fn`, wrapped by the selected fast paths that move work into the data-loader workers."""
+    """`collate_fn`, wrapped by the selected fast paths that move work into the data-loader workers. Each wrapper is
+    `collate_fn` itself when nothing was set up for it, or when this DataLoader is for another model than the one
+    that was set up."""
+    wrapped = collate_fn
     for name, path in FAST_PATHS.items():
         if path.collate and enabled(name):
             module, function = path.collate.split(":")
-            collate_fn = getattr(importlib.import_module(f"starVLA.fast.{module}"), function)(cfg, collate_fn)
-    return collate_fn
+            wrapped = getattr(importlib.import_module(f"starVLA.fast.{module}"), function)(cfg, wrapped)
+    if wrapped is not collate_fn:
+        from starVLA.dataloader import worker_prep
+
+        if worker_prep._shared_memory_is_small():  # the workers' tensors travel through /dev/shm
+            print("[starVLA.fast] /dev/shm has less than 4 GiB free, so the data-loader workers do not build the "
+                  "model inputs (their tensors travel through shared memory). Raise it (docker run --shm-size) to "
+                  "enable.", flush=True)
+            return collate_fn
+    return wrapped

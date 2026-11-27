@@ -54,6 +54,11 @@ The data stage is not a bottleneck (4 workers, 58 ms per sample on the CPU, `dat
   installs the same loop with the fused cast on the ZeRO optimizer.
 - time: 528.7 ms, 1.715x (529.0 before: within noise; stages: optimizer step 164 -> 161 ms). Kept: bitwise, and it
   removes 18 GB of transient fp64 allocations.
+- Correction (2026-11-28): the premise was wrong. torch.linalg.vector_norm(g, dtype=float64) makes the same fp64
+  copy internally (ATen make_reduction: self.to(in_dtype)). Measured in isolation on a B300, both forms take 12.8 ms
+  and 16.8 GiB of extra peak memory at 2.25 B fp32 elements, with the same value. Nothing was saved, as the
+  unchanged step time above already showed; the fast path was removed (STARVLA_FAST=grad_norm and
+  STARVLA_DS_FUSED_GRAD_NORM are accepted and do nothing).
 
 ## Round 6: decoder layers compiled -> 1.84x (not bitwise)
 

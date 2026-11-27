@@ -56,7 +56,7 @@ with and without `CUDA_LAUNCH_BLOCKING=1`, wall time per stage with a GPU sync a
 
 Speedup **1.9975×** (threshold 1.02; the two reference runs differ by 0.09%). Gate 2: not bitwise (3,227 of 23,336 tensors identical, all exact items hold). Gate 3: PASS, tier N1. A first complete final check measured 2.0010× and stopped at gate 3 with a judge error (see the judge change above).
 
-Exact set (the seven paths of `STARVLA_FAST=exact` that apply to this recipe), agent-style check against the frozen reference timing: 521.9 ms, **1.74×**, gate 2: 23,336 of 23,336 tensors bitwise identical, PASS (N0).
+Exact set (the paths of `STARVLA_FAST=exact` that apply to this recipe), agent-style check against the frozen reference timing: 521.9 ms, **1.74×**, gate 2: 23,336 of 23,336 tensors bitwise identical, PASS (N0).
 
 ### Where the time was, where it is
 
@@ -67,7 +67,7 @@ the columns add up to slightly more or less than a timed step):
 |---|---:|---:|---:|---:|
 | upstream | 415 | 319 | 179 | 7 |
 | inputs in workers, no LM head, direct mask | 204 | 316 | 170 | 10 |
-| + vision attention, position cache, rotary ids, grad norm | 96 | 266 | 161 | 8 |
+| + vision attention, position cache, rotary ids | 96 | 266 | 161 | 8 |
 | + compiled decoder layers | 88 | 218 | 161 | 5 |
 
 What is left is DeepSpeed ZeRO-2 itself: per rank and step it copies the 9 GB of bf16 gradients into reduction
@@ -92,10 +92,13 @@ host, launching ten thousand small kernels one by one, and copying gradients aro
 - **Unused work removed** (`hidden_only`, `attn_mask`). QwenOFT reads the last hidden state;
   the vocabulary logits of every position were computed and dropped. The attention mask was built through four
   nested `torch.vmap` calls (150 ms of host time); two broadcasted tensor ops give the same mask.
-- **DeepSpeed ZeRO-2** (`grad_norm`, `allreduce`). The clipping norm cast every
-  gradient to fp64 first (18 GB written and read per step); `vector_norm(g, dtype=float64)` returns the same bits
-  without the copy. Gradient buckets are all-reduced in place instead of sliced, concatenated, reduced and copied
-  back.
+- **DeepSpeed ZeRO-2** (`allreduce`). Gradient buckets are all-reduced in place instead of sliced, concatenated,
+  reduced and copied back (on one or two GPUs, where the two orders of dividing and summing give the same value).
+  The rounds below also ran a `grad_norm` path, which computed the clipping norm as
+  `vector_norm(g, dtype=float64)` instead of `vector_norm(g.double())`, on the assumption that this avoids an fp64
+  copy of every gradient. It does not: torch makes the same copy inside `vector_norm`. Measured in isolation, both
+  forms take 12.8 ms and 16.8 GiB of extra peak memory at 2.25 B elements, and in training the step time did not
+  change (529.0 ms before, 528.7 ms after). The path has been removed; its name is still accepted and does nothing.
 - **Compiled layers** (`compile_lm`, `compile_vision`). One forward + backward of the 36 decoder
   layers is about 10,000 GPU ops, a third of the time in matrix products and the rest in launching small
   elementwise kernels. Each layer is compiled with Inductor (training calls only; evaluation stays eager). After
@@ -110,7 +113,7 @@ host, launching ten thousand small kernels one by one, and copying gradients aro
 | + inputs in workers, no LM head, direct mask | `worker_prep`, `hidden_only`, `attn_mask` | 677.8 | 1.34× | 66.6 |
 | + batched vision attention | `vision_attn` | 588.8 | 1.54× | 66.2 |
 | + vision position cache | `vision_pos` | 541.5 | 1.67× | 66.2 |
-| + rotary ids in workers, fused grad norm | `worker_prep`, `grad_norm` | 528.7 | 1.72× | 66.2 |
+| + rotary ids in workers | `worker_prep` (and the former `grad_norm`, which changed nothing) | 528.7 | 1.72× | 66.2 |
 | + compiled decoder layers | `compile_lm` | 493.0 | 1.84× | 59.9 |
 | + in-place all-reduce | `allreduce` | 472.4 | 1.92× | 59.9 |
 | + compiled vision blocks, gc.freeze | `compile_vision` | 437.3 | 2.07× | 59.0 |
@@ -130,7 +133,7 @@ package, `starVLA/fast/`, behind one setting:
 
 | `STARVLA_FAST` | Fast paths |
 |---|---|
-| `exact` | `attn_mask`, `hidden_only`, `vision_attn`, `vision_pos`, `worker_prep`, `worker_examples`, `grad_norm`, `allreduce` |
+| `exact` | `attn_mask`, `hidden_only`, `vision_attn`, `vision_pos`, `worker_prep`, `worker_prep_framework`, `video_prep`, `worker_examples`, `allreduce` |
 | `all` | `exact` + `sdpa`, `vision_attn_relaxed`, `compile_lm`, `compile_vision`, `compile_head`, `compile_world_model`, `text_longest`, `condition_once`, `unused_views`, `openpi_one_pass`, `openpi_compile`, `adamw_compiled`: the same operations at the same precision, in another order or from another kernel |
 | `max` | `all` + `tf32`, `openpi_sdpa`: the precision of an operation changes (on the Qwen frameworks `max` is `all,tf32`) |
 | by name only | `reduce_to_owner` (slower on two ranks), `grad_cast` and `unit_clip` (DeepSpeed's step: no measurable difference, and `unit_clip` reads the clipping factor on the host every step) |
@@ -150,7 +153,8 @@ data-loader workers). The variables of the first release are still honoured and 
 | `attn_mask` | `STARVLA_FAST_ATTN_MASK` |
 | `vision_attn` | `STARVLA_BATCHED_VISION_ATTN` |
 | `vision_pos` | `STARVLA_VISION_POS_CACHE` |
-| `grad_norm`, `allreduce`, `reduce_to_owner` | `STARVLA_DS_FUSED_GRAD_NORM`, `STARVLA_DS_PLAIN_ALLREDUCE`, `STARVLA_DS_REDUCE_TO_OWNER` |
+| `allreduce`, `reduce_to_owner` | `STARVLA_DS_PLAIN_ALLREDUCE`, `STARVLA_DS_REDUCE_TO_OWNER` |
+| none (the former `grad_norm`; accepted, does nothing) | `STARVLA_DS_FUSED_GRAD_NORM` |
 | `compile_lm`, `compile_vision` | `STARVLA_COMPILE_LM`, `STARVLA_COMPILE_VISION` |
 
 ### The judge on the unified code

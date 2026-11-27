@@ -59,7 +59,7 @@ bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 - **数据加载：** 拼 prompt、VLM processor 和旋转位置编码挪到 loader 的 worker 里做。
 - **视觉塔：** 每层一次批量注意力，而不是每张图一次；位置表缓存；编译各层。
 - **语言模型：** 不算用不到的词表 logits；直接构造注意力 mask；编译解码层。
-- **优化器步：** 算裁剪范数时不再把每个梯度拷成 fp64；原地 all-reduce；编译版 AdamW 更新。
+- **优化器步：** 梯度桶原地 all-reduce（1–2 张卡）；编译版 AdamW 更新。
 - **其他底座：** 世界模型不再把实际上冻结的文本编码器和 VAE 放进优化器（Wan 上每步省约 100 ms，峰值显存少 42–52 GiB）；
   MiniCPM-V 按块切的视觉塔保持在 flash-attention 上（快 3 倍）。
 
@@ -81,7 +81,7 @@ bash examples/simBenchmarks/LIBERO/train_files/run_libero_train.sh
 | `all` | 编译层等同精度下的重排 | 在上游种子间波动的 **3σ** 以内 |
 | `max` | fp32 动作头用 TF32、PI0 / PI05 的 softmax 用 bf16 | 统计等价，部分运算精度降低 |
 
-[全部 28 条加速路径](docs/faster/details.zh-CN.md#全部加速路径) · [常见问题](docs/faster/details.zh-CN.md#常见问题)
+[全部 27 条加速路径](docs/faster/details.zh-CN.md#全部加速路径) · [常见问题](docs/faster/details.zh-CN.md#常见问题)
 
 ## 验证
 

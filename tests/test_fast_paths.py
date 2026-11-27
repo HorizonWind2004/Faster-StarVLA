@@ -4,6 +4,7 @@ STARVLA_TEST_VLMS set to model directories, also worker_prep with their real pro
 
     python tests/test_fast_paths.py        # or: pytest tests/test_fast_paths.py
 """
+import inspect
 import os
 import subprocess
 import sys
@@ -78,8 +79,8 @@ def _inputs(model, grids):
         pixel_values=torch.randn(sum(h * w for h, w in grids), patch_dim),
         image_grid_thw=torch.tensor([[1, h, w] for h, w in grids]),
     )
-    if model.config.model_type == "qwen3_5":  # transformers 5 processors return the modality of every token
-        inputs["mm_token_type_ids"] = (input_ids == 150).long()
+    if "mm_token_type_ids" in inspect.signature(type(model).forward).parameters:
+        inputs["mm_token_type_ids"] = (input_ids == 150).long()  # transformers 5: the modality of every token
     return inputs
 
 
@@ -156,38 +157,169 @@ def _partitioned_forward(model, inputs):
         undo()
 
 
+def _generate(model, inputs):
+    """Greedy tokens of generate(), and the head inputs it made (one row of positions per step when the model's
+    forward is seen to accept logits_to_keep)."""
+    shapes = []
+    handle = model.lm_head.register_forward_pre_hook(lambda module, args: shapes.append(tuple(args[0].shape)))
+    model.eval()
+    try:
+        with torch.inference_mode():
+            tokens = model.generate(**inputs, max_new_tokens=4, do_sample=False)
+    finally:
+        handle.remove()
+        model.train()
+    return tokens, shapes
+
+
+def _picklable(model):
+    import io
+
+    try:
+        torch.save(model, io.BytesIO())
+        return True
+    except Exception:
+        return False
+
+
+def _check_copies(family, model, inputs, reference, picklable):
+    """A deep copy (an EMA or teacher copy) runs on its own weights, and the model can be pickled."""
+    import copy
+    import io
+
+    twin = copy.deepcopy(model)
+    with torch.no_grad():
+        for parameter in twin.parameters():
+            parameter.zero_()
+    kwargs = dict(output_attentions=False, output_hidden_states=True, return_dict=True)
+    with torch.no_grad():
+        ours, theirs = model(**inputs, **kwargs), twin(**inputs, **kwargs)
+    assert torch.equal(ours.hidden_states[-1], reference), f"{family}: the model changed when it was copied"
+    assert not torch.equal(theirs.hidden_states[-1], reference), f"{family}: a deep copy runs the original's weights"
+    assert torch.equal(theirs.logits, torch.zeros_like(theirs.logits)), f"{family}: a deep copy uses the original's head"
+    assert type(ours).__name__ == type(theirs).__name__ == "HiddenOnlyOutput", (type(ours), type(theirs))
+    if not picklable:  # transformers 5 keeps a local function on the model: it cannot be pickled, patched or not
+        return
+    buffer = io.BytesIO()
+    torch.save(model, buffer)
+    buffer.seek(0)
+    loaded = torch.load(buffer, weights_only=False)
+    with torch.no_grad():
+        again = loaded(**inputs, **kwargs)
+    assert type(again) is type(ours) and torch.equal(again.hidden_states[-1], reference)
+    assert torch.equal(again.logits, ours.logits), f"{family}: the pickled model's logits differ"
+
+
+def _check_mask_builder():
+    """The registered mask builder against the one it replaces, also where the two are called with a padding mask for
+    another batch size (the original raises, or takes the first rows)."""
+    from transformers import masking_utils
+
+    ours = masking_utils.ALL_MASK_ATTENTION_FUNCTIONS["sdpa"]
+    theirs = getattr(ours, "_starvla_original", None)
+    if theirs is None:  # not registered here (another transformers version)
+        return
+
+    def outcome(builder, **arguments):
+        try:
+            return builder(**arguments)
+        except Exception as error:
+            return type(error)
+
+    generator = torch.Generator().manual_seed(0)
+    for batch, rows, queries, offset in (
+        (3, 3, 5, 0),
+        (3, 1, 5, 0),
+        (2, 4, 6, 0),
+        (1, 3, 4, 2),
+        (4, 4, 1, 7),
+        (2, 2, 3, 3),
+    ):
+        kv_length = queries + offset
+        mask = (torch.rand(rows, kv_length, generator=generator) > 0.3).long()
+        for skip in (True, False):
+            arguments = dict(
+                batch_size=batch,
+                cache_position=torch.arange(offset, offset + queries),
+                kv_length=kv_length,
+                attention_mask=mask,
+                allow_is_causal_skip=skip,
+            )
+            a, b = outcome(ours, **arguments), outcome(theirs, **arguments)
+            same = (
+                (a is b)
+                if not torch.is_tensor(a) or not torch.is_tensor(b)
+                else (a.shape == b.shape and torch.equal(a, b))
+            )
+            assert same, f"mask builder differs for batch {batch}, {rows} mask rows: {a} / {b}"
+
+
+def _generate_with_hidden_states(model, inputs):
+    """generate() asked for hidden states: every step is a hidden-only call, whose logits generate() then reads."""
+    model.eval()
+    try:
+        with torch.inference_mode():
+            out = model.generate(**inputs, max_new_tokens=3, do_sample=False, output_hidden_states=True,
+                                 return_dict_in_generate=True)
+    finally:
+        model.train()
+    return out.sequences, out.hidden_states[-1][-1]
+
+
 def _check(family):
     from starVLA import fast
 
     model = _tiny(family).train()
-    inference_first = "first seen under inference_mode"
-    cases = {"uniform": [(8, 8)] * 4, "mixed sizes": [(8, 8), (8, 12), (4, 8), (8, 8)], inference_first: [(4, 12)] * 4}
+    inference_first, no_windows = "first seen under inference_mode", "window layout unavailable"
+    cases = {"uniform": [(8, 8)] * 4, "mixed sizes": [(8, 8), (8, 12), (4, 8), (8, 8)], inference_first: [(4, 12)] * 4,
+             no_windows: [(12, 8)] * 4}
     reference = {}
     calls_before = _vision_attention_calls(model, _inputs(model, cases["uniform"]))
     for name, grids in cases.items():
         hidden, grads, outputs = _run(model, _inputs(model, grids))
         reference[name] = (hidden, grads, outputs.logits.detach().clone())
-    # the emulation of partitioned parameters is one the upstream code runs on
-    hidden, logits = _partitioned_forward(model, _inputs(model, cases["uniform"]))
-    assert torch.equal(hidden, reference["uniform"][0]) and torch.equal(logits, reference["uniform"][2])
+    signature = inspect.signature(model.forward)
+    picklable = _picklable(model)  # before anything is patched
+    generated = _generate(model, _inputs(model, cases["uniform"]))
+    generated_hidden = _generate_with_hidden_states(model, _inputs(model, cases["uniform"]))
+    # the emulation of partitioned parameters, where the upstream code itself runs on it (Qwen3.5 reads a child
+    # module's weight in its parent's forward)
+    try:
+        hidden, logits = _partitioned_forward(model, _inputs(model, cases["uniform"]))
+        partitioned = True
+    except Exception:
+        partitioned = False
+    assert not partitioned or (
+        torch.equal(hidden, reference["uniform"][0]) and torch.equal(logits, reference["uniform"][2]))
 
     os.environ["STARVLA_FAST"] = ",".join(BACKBONE_PATHS)
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
     # transformers 5 builds its masks differently: attn_mask checks its builder against the installed one first
-    expected = [p for p in BACKBONE_PATHS if not (family == "qwen3_5" and p == "attn_mask" and p in skipped)]
-    assert sorted(applied) == sorted(expected) and not set(skipped) - set(BACKBONE_PATHS) - set(expected) - {"attn_mask"}, (applied, skipped)
+    expected = [p for p in BACKBONE_PATHS if not (p == "attn_mask" and p in skipped)]
+    assert sorted(applied) == sorted(expected) and set(skipped) <= {"attn_mask"}, (applied, skipped)
 
     # DeepSpeed ZeRO-3: parameters exist only inside their module's forward, the lazily computed logits included.
     # First, so that the patched forward meets these grids with nothing cached.
-    for name in ("uniform", "mixed sizes"):
+    for name in ("uniform", "mixed sizes") if partitioned else ():
         hidden, logits = _partitioned_forward(model, _inputs(model, cases[name]))
         assert torch.equal(hidden, reference[name][0]), f"{family} / {name}: hidden state differs when partitioned"
         assert torch.equal(logits, reference[name][2]), f"{family} / {name}: logits differ when partitioned"
+    from starVLA.model.modules.vlm import monkey_patch
+
+    def unavailable(*args):  # transformers >= 5.17: the Qwen2.5-VL vision model has no get_window_index
+        raise AttributeError("no get_window_index")
+
     for name, grids in cases.items():
         if name == inference_first:  # predict_action() meets a grid before training does: nothing it caches may
             with torch.inference_mode():  # be an inference tensor, which autograd refuses to save for backward
                 model(**_inputs(model, grids), output_hidden_states=True, return_dict=True)
-        hidden, grads, outputs = _run(model, _inputs(model, grids))
+        window_layout = monkey_patch._window_layout
+        if name == no_windows:  # the layout cannot be derived for this grid: the forward runs as upstream
+            monkey_patch._window_layout = unavailable
+        try:
+            hidden, grads, outputs = _run(model, _inputs(model, grids))
+        finally:
+            monkey_patch._window_layout = window_layout
         ref_hidden, ref_grads, ref_logits = reference[name]
         assert type(outputs).__name__ == "HiddenOnlyOutput", type(outputs)
         assert torch.equal(hidden, ref_hidden), f"{family} / {name}: hidden state differs"
@@ -195,19 +327,35 @@ def _check(family):
         for key in grads:
             assert torch.equal(grads[key], ref_grads[key]), f"{family} / {name}: gradient of {key} differs"
         assert torch.equal(outputs.logits, ref_logits), f"{family} / {name}: lazily computed logits differ"
+    _check_mask_builder()
+    # what was memoized is kept on the model it was made for (not under its address, which another model may get)
+    assert set(model.model.visual.__dict__["_starvla_tables"]) >= {"layouts"}, model.model.visual.__dict__.keys()
+    # generate() reads the signature of forward (position_ids, logits_to_keep, attention_mask): same tokens, and
+    # the same head inputs
+    assert inspect.signature(model.forward) == signature, f"{family}: the signature of forward changed"
+    assert inspect.signature(model.lm_head.forward) == inspect.signature(type(model.lm_head).forward.__get__(model.lm_head))
+    tokens, head_inputs = _generate(model, _inputs(model, cases["uniform"]))
+    assert torch.equal(tokens, generated[0]), f"{family}: generate() returns other tokens"
+    assert head_inputs == generated[1], f"{family}: generate() calls the head on {head_inputs}, was {generated[1]}"
+    tokens, last_hidden = _generate_with_hidden_states(model, _inputs(model, cases["uniform"]))
+    assert torch.equal(tokens, generated_hidden[0]) and torch.equal(last_hidden, generated_hidden[1]), \
+        f"{family}: generate(output_hidden_states=True) differs"
+    _check_copies(family, model, _inputs(model, cases["uniform"]), reference["uniform"][0], picklable)
     # a call with labels takes the upstream path
     inputs = _inputs(model, cases["uniform"])
     assert model(**inputs, labels=inputs["input_ids"], output_hidden_states=True).loss is not None
     # the batched vision attention really ran on the uniform case: one attention call per vision layer
     calls_after = _vision_attention_calls(model, inputs)
     depth = len(model.model.visual.blocks)
-    assert calls_after == depth < calls_before, (calls_before, calls_after, depth)
+    # (transformers >= 5.17 has no get_window_index: there the window-attention layers of Qwen2.5-VL stay as upstream)
+    every_layer = family != "qwen2_5" or hasattr(type(model.model.visual), "get_window_index")
+    assert depth <= calls_after < calls_before and (calls_after == depth or not every_layer), (calls_before, calls_after)
     from starVLA.fast import vision_attn
 
     assert vision_attn.decisions and all(vision_attn.decisions.values()), vision_attn.decisions  # probes ran, passed
     print(f"ok {family}: {len(grads)} gradients, hidden states and logits bitwise identical "
-          f"({', '.join(cases)}; fast paths: {', '.join(applied)}); "
-          f"vision attention calls per forward {calls_before} -> {calls_after}")
+          f"({', '.join(cases)}; generate(), deep copy{', pickle' if picklable else ''}; "
+          f"fast paths: {', '.join(applied)}); vision attention calls per forward {calls_before} -> {calls_after}")
 
 
 def _check_flash_attention():
@@ -227,9 +375,12 @@ def _check_flash_attention():
     assert _implementations(model) == {"flash_attention_2"}
     os.environ["STARVLA_FAST"] = "all"
     applied, skipped = fast._run("backbone", SimpleNamespace(model=model))
-    assert applied == ["sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
-                       "compile_lm", "compile_vision"], applied
-    assert skipped == ["worker_prep", "video_prep", "compile_world_model", "text_longest"] and _implementations(model) == {"sdpa"}, skipped
+    # transformers 5 builds its masks differently: attn_mask checks its builder against the installed one first
+    declined = [p for p in ("attn_mask",) if p in skipped]
+    assert applied == [p for p in ("sdpa", "attn_mask", "hidden_only", "vision_attn", "vision_pos", "vision_attn_relaxed",
+                                   "compile_lm", "compile_vision") if p not in declined], applied
+    assert skipped == declined + ["worker_prep", "video_prep", "compile_world_model", "text_longest"] and \
+        _implementations(model) == {"sdpa"}, skipped
     with torch.no_grad():  # an inference call: the compiled layers are for training calls
         model.eval()(**_inputs(model, [(4, 4), (4, 4)]), output_hidden_states=True, return_dict=True)
     print(f"ok flash-attention: kept at the exact level, SDPA at the all level ({', '.join(applied)})")
@@ -238,21 +389,40 @@ def _check_flash_attention():
 class _Samples:
     """Six samples the way the LeRobot datasets return them: two views, an instruction, a state, an action chunk."""
 
+    def __init__(self, count=6):
+        self.count = count
+
     def __len__(self):
-        return 6
+        return self.count
 
     def __getitem__(self, index):
         import numpy as np
         from PIL import Image
 
         rng = np.random.default_rng(index)
-        return {"image": [Image.fromarray(rng.integers(0, 256, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
-                "lang": "put the bowl on the plate" + " and then close the drawer" * (index % 3),
-                "state": rng.uniform(-1, 1, (1, 8)).astype(np.float32), "action": rng.normal(size=(8, 7))}
+        return {
+            "image": [Image.fromarray(rng.integers(0, 256, (224, 224, 3), dtype=np.uint8)) for _ in range(2)],
+            "lang": "put the bowl on the plate" + " and then close the drawer" * (index % 3),
+            "state": rng.uniform(-1, 1, (1, 8)).astype(np.float32),
+            "action": rng.normal(size=(8, 7)),
+        }
 
 
 def _same_batch(batch):
     return batch
+
+
+class _Shell(torch.nn.Module):
+    """Stands for the Hugging Face model: its device, its inner model, and a forward that shows what it was given."""
+
+    device = property(lambda self: torch.device("cpu"))
+
+    def __init__(self, core):
+        super().__init__()
+        self.model, self.seen = core, None
+
+    def forward(self, **kwargs):
+        self.seen = kwargs
 
 
 def _check_worker_prep(model_dir):
@@ -265,8 +435,12 @@ def _check_worker_prep(model_dir):
     from transformers import AutoConfig, AutoProcessor
 
     from starVLA import fast
-    from starVLA.fast import worker_prep
+    from starVLA.dataloader import worker_prep
+    from starVLA.fast import worker_prep as registered
     from starVLA.model.framework.share_tools import add_discretized_state_to_instruction
+
+    assert registered.stats is worker_prep.input_stats
+    os.environ["STARVLA_FAST"] = "worker_prep"
 
     if "Qwen2.5-VL" in model_dir:
         from transformers import Qwen2_5_VLModel as core_class
@@ -276,52 +450,184 @@ def _check_worker_prep(model_dir):
         from transformers import Qwen3VLModel as core_class
 
         from starVLA.model.modules.vlm.QWen3 import _QWen3_VL_Interface as interface_class
-    cfg = OmegaConf.create({"framework": {"name": "QwenGR00T", "qwenvl": {"base_vlm": model_dir},
-                                          "action_model": {"action_horizon": 8}}, "datasets": {"vla_data": {}}})
+    cfg = OmegaConf.create(
+        {
+            "framework": {"name": "QwenGR00T", "qwenvl": {"base_vlm": model_dir}, "action_model": {"action_horizon": 8}},
+            "datasets": {"vla_data": {}},
+        }
+    )
     core = core_class.__new__(core_class)  # get_rope_index reads only the config
     nn.Module.__init__(core)
     core.config = AutoConfig.from_pretrained(model_dir)
-    interface = interface_class.__new__(interface_class)
-    nn.Module.__init__(interface)
-    interface.processor = AutoProcessor.from_pretrained(model_dir)
-    interface.processor.tokenizer.padding_side = "left"
-    interface.config = cfg
-    interface.__dict__["model"] = SimpleNamespace(device=torch.device("cpu"), model=core)
+
+    def new_interface():
+        interface = interface_class.__new__(interface_class)
+        nn.Module.__init__(interface)
+        interface.processor = AutoProcessor.from_pretrained(model_dir)
+        interface.processor.tokenizer.padding_side = "left"
+        interface.config, interface.model = cfg, _Shell(core)
+        return interface
+
+    interface = new_interface()
+    shell = interface.model
     original = interface.build_qwenvl_inputs
 
-    os.environ["STARVLA_FAST"] = "worker_prep"
     applied, skipped = fast._run("backbone", interface)
     assert applied == ["worker_prep"] and not skipped, (applied, skipped)
 
     suffix = f" Please predict the next 8 robot actions: <action>{'🔍' * 8}<action>."
-    with_state = lambda batch: add_discretized_state_to_instruction([e["lang"] for e in batch], [e["state"] for e in batch])
-    prompts = {"QwenGR00T": lambda batch: [e["lang"] for e in batch], "QwenPI_v3": with_state,
-               "QwenOFT": lambda batch: [instruction + suffix for instruction in with_state(batch)]}
+    with_state = lambda batch: add_discretized_state_to_instruction(
+        [e["lang"] for e in batch], [e["state"] for e in batch]
+    )
+    prompts = {
+        "QwenGR00T": lambda batch: [e["lang"] for e in batch],
+        "QwenPI_v3": with_state,
+        "QwenOFT": lambda batch: [instruction + suffix for instruction in with_state(batch)],
+    }
     for framework, prompt in prompts.items():
         cfg.framework.name = framework
-        loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=fast.worker_collate(cfg, _same_batch),
-                            multiprocessing_context="spawn" if framework == "QwenOFT" else None)  # must pickle
-        used = worker_prep.stats["used"]
+        loader = DataLoader(
+            _Samples(),
+            batch_size=2,
+            num_workers=2,
+            collate_fn=fast.worker_collate(cfg, _same_batch),
+            multiprocessing_context="spawn" if framework == "QwenOFT" else None,
+        )  # must pickle
+        used = worker_prep.input_stats["used"]
         for batch in loader:
             images, instructions = [e["image"] for e in batch], prompt(batch)
             got = interface.build_qwenvl_inputs(images=images, instructions=instructions)
             reference = original(images=images, instructions=instructions)
-            position_ids, _ = core.get_rope_index(input_ids=reference["input_ids"], image_grid_thw=reference["image_grid_thw"],
-                                                  attention_mask=reference["attention_mask"])
-            assert type(got) is type(reference) and set(got.keys()) == set(reference.keys()) | {"position_ids"}
+            position_ids, _ = core.get_rope_index(
+                input_ids=reference["input_ids"],
+                image_grid_thw=reference["image_grid_thw"],
+                attention_mask=reference["attention_mask"],
+            )
+            # the keys are the interface's own; the workers' position ids reach a forward on exactly these tensors
+            assert type(got) is type(reference) and set(got.keys()) == set(reference.keys())
             for key in reference.keys():
                 assert torch.equal(got[key], reference[key]) and got[key].dtype == reference[key].dtype, (framework, key)
-            assert torch.equal(got["position_ids"], position_ids), framework
-        assert worker_prep.stats["used"] == used + 3, (framework, worker_prep.stats)
-    # a prompt the workers did not expect, and a call with other images: the interface answers itself
-    batch = next(iter(loader))
-    images = [e["image"] for e in batch]
+            shell(**got, output_hidden_states=True)
+            assert torch.equal(shell.seen["position_ids"], position_ids), framework
+            for changed in (
+                {"input_ids": got["input_ids"].clone()},  # other tensors (generate(), a framework that edits them)
+                {"attention_mask": got["attention_mask"].clone()},
+                {"position_ids": position_ids + 1},  # the caller's own
+                {"inputs_embeds": torch.zeros(1)},
+            ):
+                shell(**{**got, **changed})
+                assert shell.seen.get("position_ids") is changed.get("position_ids"), (framework, list(changed))
+            got["attention_mask"][0, 0] = got["attention_mask"][0, 0].clone()  # modified in place since
+            shell(**got)
+            assert "position_ids" not in shell.seen, framework
+        assert worker_prep.input_stats["used"] == used + 3, (framework, worker_prep.input_stats)
+    # one batch per case from here on (what the workers built is handed over once)
+    cfg.framework.name = "QwenOFT"
+    loader = DataLoader(
+        _Samples(40), batch_size=2, num_workers=1, collate_fn=fast.worker_collate(cfg, _same_batch)
+    )
+    batches = iter(loader)
+    stats = worker_prep.input_stats
+
+    def case():
+        batch = next(batches)
+        return batch, [e["image"] for e in batch], prompts["QwenOFT"](batch)
+
+    def identical(got, images, instructions):
+        reference = original(images=images, instructions=instructions)
+        return set(got.keys()) == set(reference.keys()) and all(
+            torch.equal(got[k], reference[k]) for k in reference.keys()
+        )
+
+    # a prompt the workers did not expect: the interface answers itself
+    batch, images, instructions = case()
     other = interface.build_qwenvl_inputs(images=images, instructions=["something else"] * 2)
-    assert "position_ids" not in other and worker_prep.stats["other prompt"] == 1
-    fresh = interface.build_qwenvl_inputs(images=[list(sample) for sample in images][::-1], instructions=prompts["QwenOFT"](batch)[::-1])
-    assert "position_ids" not in fresh and worker_prep.stats["used"] == 9
-    print(f"ok worker_prep {os.path.basename(model_dir)}: inputs built in workers are identical for "
-          f"{', '.join(prompts)} ({', '.join(sorted(reference.keys()))} + position_ids)")
+    shell(**other)
+    assert "position_ids" not in shell.seen and stats["other prompt"] == 1 and stats["used"] == 9
+    # the same call twice: the second is answered by the interface, with the same tensors
+    first = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    again = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 10 and all(torch.equal(first[k], again[k]) for k in first.keys())
+    # copies of the images with the same pixels (a framework that resizes to the size they have)
+    batch, images, instructions = case()
+    copies = interface.build_qwenvl_inputs(
+        images=[[im.copy() for im in sample] for sample in images], instructions=instructions
+    )
+    assert stats["used"] == 11 and identical(copies, images, instructions)
+    # an image edited in place after the workers saw it: built from what it is now
+    batch, images, instructions = case()
+    images[0][0].paste(0, (0, 0, 64, 64))
+    edited = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 11 and identical(edited, images, instructions), "an image edited in place went unnoticed"
+    # the processor or the config changed after the DataLoader was made: built from what they are now
+    for change, undo in (
+        (lambda: interface.processor.tokenizer.add_tokens(["<|test_token|>"]), None),
+        (lambda: setattr(interface.processor.image_processor, "max_pixels", 96 * 96), None),
+        (
+            lambda: OmegaConf.update(
+                cfg, "datasets.vla_data.CoT_prompt", "Task: {instruction} Think first.", force_add=True
+            ),
+            None,
+        ),
+    ):
+        batch, images, instructions = case()
+        changed_before = stats["changed since"]
+        change()
+        late = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+        assert stats["used"] == 11 and stats["changed since"] == changed_before + 1, stats
+        assert identical(late, images, instructions)
+    # a DataLoader made now carries the interface as it is now
+    loader = DataLoader(
+        _Samples(40), batch_size=2, num_workers=1, collate_fn=fast.worker_collate(cfg, _same_batch)
+    )
+    batches = iter(loader)
+    batch, images, instructions = case()
+    now = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 12 and identical(now, images, instructions)
+    # under inference mode (predict_action) the worker's inputs are used; tensors made under it (a copy to the GPU)
+    # carry no position ids, the model derives them
+    batch, images, instructions = case()
+    with torch.inference_mode():
+        inferred = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+        assert stats["used"] == 13 and identical(inferred, images, instructions)
+        shell(**{key: value.clone() for key, value in inferred.items()})
+    assert "position_ids" not in shell.seen
+    # a deep copy (an EMA or teacher copy) and a pickle have their own builder; the worker's inputs fit a copy too
+    import copy
+    import pickle
+
+    twin = copy.deepcopy(interface)
+    assert twin.build_qwenvl_inputs.owner is twin and interface.build_qwenvl_inputs.owner is interface
+    batch, images, instructions = case()
+    taken = twin.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 14 and identical(taken, images, instructions)
+    shell.seen = None
+    assert pickle.loads(pickle.dumps(interface)).build_qwenvl_inputs.key == interface.build_qwenvl_inputs.key
+    # a second interface in the process (a teacher, another checkpoint): each takes only what was built for it
+    second = new_interface()
+    assert fast._run("backbone", second)[0] == ["worker_prep"]
+    loader = DataLoader(_Samples(), batch_size=2, num_workers=1, collate_fn=fast.worker_collate(cfg, _same_batch))
+    batch = next(iter(loader))
+    images, instructions = [e["image"] for e in batch], prompts["QwenOFT"](batch)
+    mine = interface.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 14, "an interface took inputs that were built for another one"
+    theirs = second.build_qwenvl_inputs(images=images, instructions=instructions)
+    assert stats["used"] == 15 and set(mine.keys()) == set(theirs.keys())
+    # a framework whose training call the workers cannot make (QwenFast passes `solutions`): nothing is built
+    cfg.framework.name = "QwenFast"
+    assert fast.worker_collate(cfg, _same_batch) is _same_batch
+    # a DataLoader for another recipe than the model that was set up: nothing is built
+    cfg.framework.name = "QwenGR00T"
+    other_recipe = OmegaConf.create({"framework": {"name": "QwenGR00T", "qwenvl": {"base_vlm": "another/model"}}})
+    assert fast.worker_collate(other_recipe, _same_batch) is _same_batch
+    # too little shared memory for the workers' tensors: the batches are left as they are
+    assert isinstance(fast.worker_collate(cfg, _same_batch), worker_prep.Collate)
+    worker_prep._MIN_SHARED_MEMORY = 1 << 62
+    assert fast.worker_collate(cfg, _same_batch) is _same_batch
+    print(
+        f"ok worker_prep {os.path.basename(model_dir)}: inputs built in workers are identical for "
+        f"{', '.join(prompts)} ({', '.join(sorted(reference.keys()))}; position ids through the forward hook)"
+    )
 
 
 class _PixelProcessor:
@@ -333,8 +639,9 @@ class _PixelProcessor:
         width = max(len(p) for p in prompts)
         ids = torch.tensor([[0] * (width - len(p)) + [ord(c) % 256 for c in p] for p in prompts])
         mask = torch.tensor([[0] * (width - len(p)) + [1] * len(p) for p in prompts])
-        pixels = torch.stack([torch.stack([torch.as_tensor(np.asarray(im), dtype=torch.float32) for im in views])
-                              for views in images])
+        pixels = torch.stack(
+            [torch.stack([torch.as_tensor(np.asarray(im), dtype=torch.float32) for im in views]) for views in images]
+        )
         return BatchFeature(data={"input_ids": ids, "attention_mask": mask, "pixel_values": pixels})
 
 
@@ -367,7 +674,7 @@ def test_worker_prep_framework():
     from torch.utils.data import DataLoader
 
     from starVLA import fast
-    from starVLA.fast import worker_prep
+    from starVLA.dataloader import worker_prep
 
     framework = _OwnBuilderFramework()
     original = framework._build_vlm_inputs
@@ -378,12 +685,12 @@ def test_worker_prep_framework():
     collate = fast.worker_collate(cfg, _same_batch)
     assert fast.worker_collate(cfg, collate) is collate  # wrapped once
     loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=collate, multiprocessing_context="spawn")
-    used = worker_prep.stats["used"]
+    used = worker_prep.input_stats["used"]
     for batch in loader:
         images, instructions = [e["image"] for e in batch], [e["lang"] for e in batch]
         got, reference = framework._build_vlm_inputs(images, instructions), original(images, instructions)
         assert got.keys() == reference.keys() and all(torch.equal(got[k], reference[k]) for k in reference.keys())
-    assert worker_prep.stats["used"] == used + 3, worker_prep.stats
+    assert worker_prep.input_stats["used"] == used + 3, worker_prep.input_stats
     other = framework._build_vlm_inputs(images, ["something else"] * 2)  # built by the framework itself
     assert torch.equal(other["input_ids"], original(images, ["something else"] * 2)["input_ids"])
     print("ok worker_prep_framework: a framework's own input construction in the workers, identical inputs")
@@ -391,6 +698,8 @@ def test_worker_prep_framework():
 
 class _VideoBackbone(torch.nn.Module):
     """The image encoding loop of starVLA's Wan interface, without the VAE."""
+
+    size = (480, 832)
 
     def __init__(self):
         super().__init__()
@@ -406,6 +715,30 @@ class _VideoBackbone(torch.nn.Module):
             preprocessed.append(video_tensor)
         return preprocessed
 
+    encode = _encode_images_vae
+
+
+class _CosmosBackbone(torch.nn.Module):
+    """The same loop as starVLA's Cosmos-Predict2 interface has it: another method name, another size."""
+
+    size = (320, 576)
+
+    def __init__(self):
+        super().__init__()
+        from diffusers.video_processor import VideoProcessor
+
+        self.video_processor = VideoProcessor(vae_scale_factor=8)
+
+    def _encode_images(self, images, num_frames=None):
+        height, width = 320, 576
+        preprocessed = []
+        for sample_imgs in images:
+            video_tensor = self.video_processor.preprocess_video(sample_imgs, height=height, width=width)
+            preprocessed.append(video_tensor)
+        return preprocessed
+
+    encode = _encode_images
+
 
 def test_video_prep():
     """video_prep: a world model's per-sample image preprocessing in the data-loader workers; the interface's loop
@@ -415,28 +748,72 @@ def test_video_prep():
     except ImportError:
         print("skipped video_prep: no diffusers")
         return
+    import copy
+    import pickle
+
     from torch.utils.data import DataLoader
 
     from starVLA import fast
+    from starVLA.dataloader import worker_prep
     from starVLA.fast import world_model
 
-    backbone = _VideoBackbone()
+    stats = world_model.video_stats
+    assert stats is worker_prep.video_stats
     os.environ["STARVLA_FAST"] = "video_prep"
-    applied, _ = fast._run("backbone", backbone)
-    assert applied == ["video_prep"], applied
-    reference = VideoProcessor(vae_scale_factor=16)
-    collate = fast.worker_collate(SimpleNamespace(framework={"name": "WanGR00T"}), _same_batch)
-    loader = DataLoader(_Samples(), batch_size=2, num_workers=2, collate_fn=collate, multiprocessing_context="spawn")
-    used = world_model.video_stats["used"]
-    for batch in loader:
+    for backbone_class in (_VideoBackbone, _CosmosBackbone):
+        backbone = backbone_class()
+        height, width = backbone.size
+        reference = VideoProcessor(vae_scale_factor=backbone.video_processor.config.vae_scale_factor)
+        applied, _ = fast._run("backbone", backbone)
+        assert applied == ["video_prep"], (backbone_class.__name__, applied)
+
+        def same(tensors, images):
+            return all(
+                torch.equal(got, reference.preprocess_video(sample, height=height, width=width))
+                for got, sample in zip(tensors, images, strict=True)
+            )
+
+        collate = fast.worker_collate(SimpleNamespace(framework={"name": "WanGR00T"}), _same_batch)
+        loader = DataLoader(
+            _Samples(12), batch_size=2, num_workers=2, collate_fn=collate, multiprocessing_context="spawn"
+        )
+        batches = iter(loader)
+        used = stats["used"]
+        for _ in range(3):
+            batch = next(batches)  # alive while it is used, as in a training step
+            images = [e["image"] for e in batch]
+            assert same(backbone.encode(images), images)
+        assert stats["used"] == used + 6, stats
+        # the same call again (handed over once), and copies of the images: computed here, the same tensors
+        copies = [[im.copy() for im in sample] for sample in images]
+        assert same(backbone.encode(images), images) and same(backbone.encode(copies), images)
+        assert stats["used"] == used + 6, stats
+        # an image edited in place after the workers saw it: computed from what it is now
+        batch = next(batches)
         images = [e["image"] for e in batch]
-        for got, sample in zip(backbone._encode_images_vae(images), images):
-            assert torch.equal(got, reference.preprocess_video(sample, height=480, width=832))
-    assert world_model.video_stats["used"] == used + 6, world_model.video_stats
-    copies = [[im.copy() for im in sample] for sample in images]  # other image objects: computed here
-    assert all(torch.equal(a, b) for a, b in zip(backbone._encode_images_vae(copies), backbone._encode_images_vae(images)))
-    assert world_model.video_stats["used"] == used + 8
-    print("ok video_prep: a world model's image preprocessing in the workers, identical tensors")
+        images[0][0].paste(0, (0, 0, 64, 64))
+        assert same(backbone.encode(images), images) and stats["used"] == used + 7, stats  # the second sample only
+        # the processor's settings changed after the DataLoader was made: computed here
+        batch = next(batches)
+        images = [e["image"] for e in batch]
+        setting = backbone.video_processor.config.resample
+        backbone.video_processor._processor._internal_dict = type(backbone.video_processor.config)(
+            {**backbone.video_processor.config, "resample": "bilinear" if setting != "bilinear" else "lanczos"}
+        )
+        changed = backbone.encode(images)
+        assert stats["used"] == used + 7, stats
+        backbone.video_processor._processor._internal_dict = type(backbone.video_processor.config)(
+            {**backbone.video_processor.config, "resample": setting}
+        )
+        assert not same(changed, images) or setting == "bilinear"  # it did use the changed setting
+        # a deep copy and a pickle of the backbone work, and a copy takes what was built for the original
+        twin = copy.deepcopy(backbone)
+        assert pickle.loads(pickle.dumps(backbone.video_processor)).config == backbone.video_processor.config
+        batch = next(batches)
+        images = [e["image"] for e in batch]
+        assert same(twin.encode(images), images) and stats["used"] == used + 9, stats
+        del loader, batches
+    print("ok video_prep: a world model's image preprocessing in the workers (Wan, Cosmos-Predict2), identical tensors")
 
 
 def _check_condition_once():
@@ -527,6 +904,48 @@ def test_cast_while_flattening():
         assert torch.equal(actual, expected) and torch.equal(torch.signbit(actual), torch.signbit(expected)), norm
         assert torch.equal(actual, gradient) == (norm < 0.9999985), norm  # untouched exactly when nothing is clipped
     print("ok skip_unit_clip: the gradient is identical with and without clipping")
+
+
+def test_plain_allreduce():
+    """The in-place all-reduce is taken only where it is bitwise identical to DeepSpeed's default reduction: one or
+    two ranks, gradients communicated in bf16 or fp32. The arithmetic of the two paths is compared here as well."""
+    try:
+        from deepspeed import comm
+    except Exception as error:
+        print(f"skipped plain_allreduce: no deepspeed ({type(error).__name__})")
+        return
+    from starVLA.fast import deepspeed
+
+    world_size = comm.get_world_size
+
+    def decision(ranks, communication, dtype=torch.bfloat16):
+        class DeepSpeedZeroOptimizer:
+            reduce_scatter, dp_process_group = True, None
+
+        optimizer = DeepSpeedZeroOptimizer()
+        optimizer.communication_data_type, optimizer.dtype = communication, dtype
+        comm.get_world_size = lambda group=None: ranks
+        try:
+            applied = deepspeed.plain_allreduce(SimpleNamespace(optimizer=optimizer))
+        finally:
+            comm.get_world_size = world_size
+        assert applied == (optimizer.reduce_scatter is False)
+        return applied
+
+    assert decision(1, torch.bfloat16) and decision(2, torch.bfloat16) and decision(2, torch.float32)
+    assert not decision(3, torch.bfloat16) and not decision(8, torch.float32)
+    assert not decision(2, torch.float16) and not decision(2, torch.float32, dtype=torch.float16)
+    assert not deepspeed.plain_allreduce(object())
+    # default path: each rank halves, then the sum; in place: the sum, then half (DeepSpeed 0.16.9)
+    generator = torch.Generator().manual_seed(0)
+    for dtype in (torch.bfloat16, torch.float32):
+        a, b = (torch.randn(1 << 16, generator=generator).to(dtype) for _ in range(2))
+        assert torch.equal(a / 2 + b / 2, (a + b) * 0.5), dtype  # ordinary gradient values: the same bits
+    tiny = torch.tensor([1e-45], dtype=torch.float32)  # the documented exception: a half that is not representable
+    assert (tiny / 2 + tiny / 2).item() == 0.0 and ((tiny + tiny) * 0.5).item() > 0.0
+    half = torch.tensor([40000.0], dtype=torch.float16)
+    assert torch.isinf((half + half) * 0.5).all() and torch.isfinite(half / 2 + half / 2).all()  # why fp16 is declined
+    print("ok plain_allreduce: taken on one or two ranks with bf16 / fp32 gradients, declined for fp16 or more ranks")
 
 
 def test_compile_fallbacks():
@@ -713,7 +1132,7 @@ def test_other_backbones():
     framework.model.vlm = _tiny("qwen3")
     os.environ["STARVLA_FAST"] = "hidden_only"
     fast.accelerate_framework(framework)
-    assert getattr(framework.model.vlm, "_starvla_hidden_only", False)
+    assert type(vars(framework.model.vlm).get("forward")).__name__ == "_HiddenOnlyForward"
     interface = SimpleNamespace(model=_tiny("qwen3"))  # a backbone that went through get_vlm_model is not redone
     fast.accelerate_backbone(interface)
     framework.model.vlm = interface.model
@@ -1081,6 +1500,9 @@ def test_selection():
         for name in ("COMPILE_LM", "COMPILE_VISION"):
             del os.environ["STARVLA_" + name]
         assert fast.selection() == frozenset(n for n in fast.LEVELS["exact"] if fast.FAST_PATHS[n].legacy)
+        # a former fast path: its name and its variable are accepted and select nothing
+        os.environ["STARVLA_FAST"] = "exact,grad_norm"
+        assert "grad_norm" not in fast.FAST_PATHS and fast.selection() == fast.LEVELS["exact"]
         os.environ["STARVLA_FAST"] = "nonsense"
         try:
             fast.selection()
@@ -1179,6 +1601,7 @@ if __name__ == "__main__":
         test_flash_attention_backbone()
         test_condition_once()
         test_cast_while_flattening()
+        test_plain_allreduce()
         test_compile_fallbacks()
         test_adamw_compiled()
         test_other_backbones()

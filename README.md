@@ -61,7 +61,7 @@ Each column is one timing run of the headline recipe against the frozen baseline
 - **Data loader:** prompt building, the VLM processor and rotary position ids run in the loader workers.
 - **Vision tower:** one batched attention call per layer instead of one per image; cached position tables; compiled blocks.
 - **Language model:** no unused vocabulary logits; a direct attention mask; compiled decoder layers.
-- **Optimizer step:** no fp64 copy of every gradient for the clipping norm; in-place all-reduce; a compiled AdamW update.
+- **Optimizer step:** gradient buckets all-reduced in place (one or two GPUs); a compiled AdamW update.
 - **Other backbones:** world models stop carrying their frozen-in-practice text encoder and VAE in the optimizer
   (on Wan about 100 ms per step and 42–52 GiB of peak memory); MiniCPM-V's per-chunk vision tower stays on flash-attention (3×).
 
@@ -83,7 +83,7 @@ the backbone, the framework, the DeepSpeed engine and the data loader are built.
 | `all` | compiled layers and other reorderings at the same precision | within **3σ** of upstream's seed-to-seed spread |
 | `max` | TF32 for fp32 heads, bf16 softmax in PI0 / PI05 | statistically equivalent, lower precision in places |
 
-[All 28 fast paths](docs/faster/details.md#every-fast-path) · [FAQ](docs/faster/details.md#faq)
+[All 27 fast paths](docs/faster/details.md#every-fast-path) · [FAQ](docs/faster/details.md#faq)
 
 ## Validation
 

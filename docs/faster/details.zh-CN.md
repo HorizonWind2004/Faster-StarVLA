@@ -25,7 +25,7 @@ N1 同精度下的重排，N2 改变了数据类型或数学模式。
 全部代码在一个包里：[`starVLA/fast/`](../../starVLA/fast/__init__.py)，只在四个不属于任何框架的位置被调用：构建底座处
 （`get_vlm_model`）、构建框架处（`build_framework`）、训练脚本拿到 DeepSpeed 引擎处、构建数据加载器处。
 任何框架和底座接口里都没有开关，也没有一行加速代码。一条加速路径就是一个带 `apply(target) -> bool` 的模块加上
-[`FAST_PATHS`](../../starVLA/fast/__init__.py) 里的一行；不适用时返回 `False`，日志里会列为“不适用”。
+[`FAST_PATHS`](../../starVLA/fast/__init__.py) 里的一行；不适用时返回 `False`，日志里会列为“不适用”。其中修改 transformers 模型代码、以及把工作挪到 DataLoader 工作进程里的几条 exact 路径，实现在 [`starVLA/model/modules/vlm/monkey_patch.py`](../../starVLA/model/modules/vlm/monkey_patch.py) 和 [`starVLA/dataloader/worker_prep.py`](../../starVLA/dataloader/worker_prep.py)（即提给上游的那两个文件），`starVLA/fast/` 里的同名模块只是注册入口。
 
 ## 全部加速路径
 
@@ -38,9 +38,8 @@ N1 同精度下的重排，N2 改变了数据类型或数学模式。
 | `vision_attn` | exact | 视觉塔 | 每层一次批量注意力调用，取代逐张图片各算一次、每层还要和主机同步一次的做法；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔，注意力实现为 SDPA；只在当前 GPU 上自检确认批量调用逐位一致的图像形状上启用 |
 | `vision_pos` | exact | 视觉塔 | 位置表按网格尺寸只建一次，不再每次前向都建；Qwen2-VL / Qwen2.5-VL / Qwen3-VL 视觉塔 |
 | `attn_mask` | exact | 语言模型 | 因果 + 填充掩码由两次广播运算得到，取代四层嵌套的 `torch.vmap`；transformers 里用 `masking_utils` 构建掩码的底座（Qwen、Gemma、Llama、Phi 系列），且注意力实现为 SDPA |
-| `hidden_only` | exact | 语言模型 | 不再计算用不到的词表 logits；任何带 LM head 的底座，调用时只要隐状态、不带 labels |
-| `grad_norm` | exact | 优化器步 | 梯度裁剪的范数不再把每个梯度复制成 fp64（主配方上每步写入再读回 18 GB）；任何用 DeepSpeed ZeRO-2 训练的框架 |
-| `allreduce` | exact | 优化器步 | 梯度桶原地 all-reduce；任何用 DeepSpeed ZeRO-2 训练的框架 |
+| `hidden_only` | exact | 语言模型 | 不再计算用不到的词表 logits；任何带 LM head 的底座，调用时只要隐状态、不带 labels。这样的调用返回的是包了一层的输出对象，`logits` 在被读取时才计算：每个字段的值都和上游相同，但它不是 transformers 的 `ModelOutput`（没有 `to_tuple()`，`isinstance` 判断不成立） |
+| `allreduce` | exact | 优化器步 | 梯度桶原地 all-reduce；用 DeepSpeed ZeRO-2 在 1–2 张卡上训练、梯度为 bf16 或 fp32 的框架。此时逐位一致，只有绝对值小于 2.4e-38 的梯度值例外（减半时会舍入）；卡数更多或梯度为 fp16 时不启用，DeepSpeed 保持原样 |
 | `sdpa` | all | 整个底座 | 用 flash-attention 加载的底座（或者只因某个子模型没有 SDPA 而用 eager 的底座，如 Gemma 4）切换到 PyTorch 的 scaled-dot-product attention：同一种注意力，换一个实现；下面针对 SDPA 的路径和编译层都依赖它。离开 flash-attention 后会逐个切片或窗口调用注意力、又不在 `vision_attn` 批量化范围内的视觉塔（MiniCPM-V 4.6）保留 flash-attention |
 | `vision_attn_relaxed` | all | 视觉塔 | 对所有尺寸一致的图像形状做批量视觉注意力（末位舍入可能不同） |
 | `compile_vision`、`compile_lm` | all | 视觉塔、语言模型 | 视觉 block 和解码器层在训练调用时用 Inductor 编译，并用 `gc.freeze()` 消除编译带来的垃圾回收停顿；适用于有 `model.visual.blocks` / `model.language_model.layers` 的底座（Qwen-VL 系列）以及其他 Hugging Face 多模态封装里的对应位置，且注意力实现为 SDPA；编译器处理不了的层保持 eager |
@@ -146,7 +145,7 @@ MiniCPM-V 4.6 需要 transformers 5，上游固定的是 4.57。新配方都在�
 
 优化开始前已经验证过评判程序会拒绝该拒绝的情况（改了训练设置、改了裁剪阈值、VLM 收不到梯度、所有学习率乘 1.02），并放行等价的重排。
 
-**`STARVLA_FAST=exact`。** 打开适用于这个配方的七条逐位一致的加速路径，在确定性模式下跑两个 2 步训练用例（其中一个在两步之间插入配方里的周期性
+**`STARVLA_FAST=exact`。** 打开适用于这个配方的逐位一致的加速路径，在确定性模式下跑两个 2 步训练用例（其中一个在两步之间插入配方里的周期性
 评估），两张卡都记录：23,336 个张量（loss，以及全部 729 个参数的 fp32 梯度、更新量和两个 Adam 状态）与上游
 逐位相同；学习率、随机数状态、喂给 VLM 的输入摘要也都相同。
 
